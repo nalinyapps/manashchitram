@@ -36,14 +36,16 @@ function createEmptyContent(title = "Untitled Board"): BoardContent {
     nodes: [
       {
         id: generateId(),
-        type: "mindmap",
+        type: "shape",
         position: { x: 400, y: 300 },
         data: {
+          shapeType: "rounded",
           text: title === "Untitled Board" ? "Central Topic" : title,
           scriptMode: "plain",
           color: DEFAULT_BOARD_SETTINGS.defaultNodeColor,
           tags: [],
         },
+        style: { width: 180 },
       },
     ],
     edges: [],

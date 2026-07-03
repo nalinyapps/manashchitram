@@ -1,11 +1,13 @@
 "use client";
 
 import { create } from "zustand";
+import { MarkerType } from "@xyflow/react";
 import type { Node, Edge, Viewport } from "@xyflow/react";
 import type { BoardSettings, SaveStatus, VidyaBoard } from "@/lib/types";
 import { DEFAULT_BOARD_SETTINGS } from "@/lib/types";
 import { HISTORY_LIMIT } from "@/lib/config";
 import { generateId } from "@/lib/utils";
+import { computeLayout, type LayoutMode } from "@/lib/layout";
 
 interface HistoryEntry {
   nodes: Node[];
@@ -47,10 +49,49 @@ interface CanvasState {
   convertNode: (nodeId: string, newType: string, extraData?: Record<string, unknown>) => void;
   updateBoardTitle: (title: string) => void;
   performSearch: (query: string) => void;
+  applyLayout: (mode: LayoutMode) => void;
 }
 
 function cloneState(nodes: Node[], edges: Edge[]): HistoryEntry {
   return { nodes: structuredClone(nodes), edges: structuredClone(edges) };
+}
+
+/**
+ * Migrate legacy "mindmap" nodes into rounded shapes so every node is a
+ * unified, connectable shape. Preserves all data; adds a shapeType default.
+ */
+function migrateNodes(nodes: Node[]): Node[] {
+  return nodes.map((n) => {
+    if (n.type !== "mindmap") return n;
+    const data = n.data as Record<string, unknown>;
+    return {
+      ...n,
+      type: "shape",
+      data: { ...data, shapeType: (data.shapeType as string) ?? "rounded" },
+    };
+  });
+}
+
+/** Styling fields a child inherits from its parent (not content or per-node regions). */
+function inheritStyle(parentData: Record<string, unknown>): Record<string, unknown> {
+  const keys = [
+    "shapeType", "color", "fillColor", "fillOpacity",
+    "borderColor", "borderWidth", "borderStyle", "borderRadius",
+    "fontFamily", "fontSize", "textColor", "scriptMode",
+  ];
+  const out: Record<string, unknown> = {};
+  for (const k of keys) if (parentData[k] !== undefined) out[k] = parentData[k];
+  return out;
+}
+
+/** Node types that can act as connectable mind-map shapes. Others default to shape. */
+const CONNECTABLE_TYPES = new Set(["shape", "sticky", "text", "mindmap"]);
+
+function childTypeFor(parentType: string | undefined): string {
+  if (parentType && CONNECTABLE_TYPES.has(parentType)) {
+    return parentType === "mindmap" ? "shape" : parentType;
+  }
+  return "shape";
 }
 
 function getNodeText(data: Record<string, unknown>): string {
@@ -75,7 +116,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   setBoard: (board) =>
     set({
       board,
-      nodes: board.content.nodes,
+      nodes: migrateNodes(board.content.nodes),
       edges: board.content.edges,
       viewport: board.content.viewport ?? { x: 0, y: 0, zoom: 1 },
       settings: board.content.settings ?? DEFAULT_BOARD_SETTINGS,
@@ -210,21 +251,30 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     get().pushHistory();
     const childId = generateId();
     const childCount = edges.filter((e) => e.source === parentId).length;
+    const parentData = parent.data as Record<string, unknown>;
+    const childType = childTypeFor(parent.type);
     const newNode: Node = {
       id: childId,
-      type: "mindmap",
+      type: childType,
       position: {
-        x: parent.position.x + 220,
-        y: parent.position.y + childCount * 80 - 40,
+        x: parent.position.x + 240,
+        y: parent.position.y + childCount * 90 - 40,
       },
-      data: { text: "New Idea", scriptMode: "plain", color: "#818cf8", tags: [] },
+      data: {
+        ...inheritStyle(parentData),
+        text: "New Idea",
+        tags: [],
+        ...(childType === "shape" && { shapeType: (parentData.shapeType as string) ?? "rounded" }),
+      },
+      style: parent.style ? { ...parent.style, height: undefined } : undefined,
     };
     const newEdge: Edge = {
       id: generateId(),
       source: parentId,
       target: childId,
       type: "branch",
-      data: { edgeType: "branch" },
+      markerEnd: { type: MarkerType.ArrowClosed, color: "#6366f1" },
+      data: { edgeType: "branch", curveStyle: "smooth" },
     };
     set({
       nodes: [...nodes, newNode],
@@ -241,11 +291,19 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     const parentEdge = edges.find((e) => e.target === nodeId);
     get().pushHistory();
     const siblingId = generateId();
+    const nodeData = node.data as Record<string, unknown>;
+    const sibType = childTypeFor(node.type);
     const newNode: Node = {
       id: siblingId,
-      type: "mindmap",
-      position: { x: node.position.x, y: node.position.y + 100 },
-      data: { text: "New Idea", scriptMode: "plain", color: "#818cf8", tags: [] },
+      type: sibType,
+      position: { x: node.position.x, y: node.position.y + 110 },
+      data: {
+        ...inheritStyle(nodeData),
+        text: "New Idea",
+        tags: [],
+        ...(sibType === "shape" && { shapeType: (nodeData.shapeType as string) ?? "rounded" }),
+      },
+      style: node.style ? { ...node.style, height: undefined } : undefined,
     };
     const newEdges = [...edges];
     if (parentEdge) {
@@ -254,7 +312,8 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         source: parentEdge.source,
         target: siblingId,
         type: "branch",
-        data: { edgeType: "branch" },
+        markerEnd: { type: MarkerType.ArrowClosed, color: "#6366f1" },
+        data: { edgeType: "branch", curveStyle: "smooth" },
       });
     }
     set({
@@ -298,6 +357,21 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
     set({
       nodes: nodes.map((n) => n.id === nodeId ? { ...n, type: newType, data: newData, style: newStyle } : n),
+      saveStatus: "unsaved",
+    });
+  },
+
+  applyLayout: (mode) => {
+    const { nodes, edges, selectedNodeIds } = get();
+    if (!nodes.length) return;
+    const rootId = selectedNodeIds.length === 1 ? selectedNodeIds[0] : undefined;
+    const positions = computeLayout(nodes, edges, mode, { rootId });
+    if (!Object.keys(positions).length) return;
+    get().pushHistory();
+    set({
+      nodes: nodes.map((n) =>
+        positions[n.id] ? { ...n, position: positions[n.id] } : n
+      ),
       saveStatus: "unsaved",
     });
   },

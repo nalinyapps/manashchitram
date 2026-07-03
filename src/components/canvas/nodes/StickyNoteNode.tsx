@@ -2,6 +2,7 @@
 
 import { memo, useState, useRef, useEffect } from "react";
 import { Handle, Position, NodeResizer, type NodeProps } from "@xyflow/react";
+import { Plus } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { getTextStyle, resolveBorderWidth, resolveFillOpacity } from "@/lib/style-utils";
 import type { StickyNoteNodeData, InternalFillRegion, BorderLayer } from "@/lib/types";
@@ -25,6 +26,7 @@ function StickyNoteNodeComponent({ id, data, selected }: NodeProps) {
   const dd = d as Record<string, unknown>;
   const updateNodeData = useCanvasStore((s) => s.updateNodeData);
   const pushHistory    = useCanvasStore((s) => s.pushHistory);
+  const createChildNode = useCanvasStore((s) => s.createChildNode);
 
   const drawingModeNodeId   = useUIStore((s) => s.drawingModeNodeId);
   const drawingRegionColor  = useUIStore((s) => s.drawingRegionColor);
@@ -53,7 +55,7 @@ function StickyNoteNodeComponent({ id, data, selected }: NodeProps) {
       <NodeResizer minWidth={140} minHeight={80} isVisible={selected && !editing && !isDrawing}
         lineStyle={{ borderColor: border }} handleStyle={{ borderColor: border, backgroundColor: "white" }} />
       <div
-        className={cn("relative w-full p-3 transition-shadow", selected ? "shadow-lg" : "shadow-md")}
+        className={cn("group relative w-full p-3 transition-shadow", selected ? "shadow-lg" : "shadow-md")}
         style={{ backgroundColor: bg, border: `${bWidth}px ${bStyle} ${border}`, borderRadius: bRadius }}
         onDoubleClick={() => {
           if (isDrawing) return;
@@ -68,6 +70,20 @@ function StickyNoteNodeComponent({ id, data, selected }: NodeProps) {
 
         <Handle type="target" position={Position.Top}    className="!opacity-0 hover:!opacity-60" />
         <Handle type="source" position={Position.Bottom} className="!opacity-0 hover:!opacity-60" />
+        <Handle type="target" position={Position.Left}   id="l" className="!opacity-0 hover:!opacity-60" />
+        <Handle type="source" position={Position.Right}  id="r" className="!opacity-0 hover:!opacity-60" />
+
+        {/* Add connected child */}
+        {!isDrawing && (
+          <button
+            className="absolute -right-3.5 -bottom-3.5 z-20 hidden h-7 w-7 items-center justify-center rounded-full border-2 border-background shadow-md transition-transform hover:scale-110 group-hover:flex"
+            style={{ backgroundColor: border }}
+            onClick={(e) => { e.stopPropagation(); createChildNode(id); }}
+            title="Add connected node"
+          >
+            <Plus className="h-3.5 w-3.5 text-white" />
+          </button>
+        )}
 
         {/* Internal fill regions (clipped to node bounds) */}
         <div className="absolute inset-0 overflow-hidden" style={{ borderRadius: bRadius }}>

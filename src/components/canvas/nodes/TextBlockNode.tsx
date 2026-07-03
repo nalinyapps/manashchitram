@@ -2,6 +2,7 @@
 
 import { memo, useState, useRef, useEffect } from "react";
 import { Handle, Position, NodeResizer, type NodeProps } from "@xyflow/react";
+import { Plus } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   getTextStyle, resolveFillColor, resolveBorderColor,
@@ -19,6 +20,7 @@ function TextBlockNodeComponent({ id, data, selected }: NodeProps) {
   const dd = d as Record<string, unknown>;
   const updateNodeData = useCanvasStore((s) => s.updateNodeData);
   const pushHistory    = useCanvasStore((s) => s.pushHistory);
+  const createChildNode = useCanvasStore((s) => s.createChildNode);
 
   const drawingModeNodeId   = useUIStore((s) => s.drawingModeNodeId);
   const drawingRegionColor  = useUIStore((s) => s.drawingRegionColor);
@@ -65,6 +67,20 @@ function TextBlockNodeComponent({ id, data, selected }: NodeProps) {
 
         <Handle type="target" position={Position.Top}    className="!opacity-0 group-hover:!opacity-50" />
         <Handle type="source" position={Position.Bottom} className="!opacity-0 group-hover:!opacity-50" />
+        <Handle type="target" position={Position.Left}   id="l" className="!opacity-0 group-hover:!opacity-50" />
+        <Handle type="source" position={Position.Right}  id="r" className="!opacity-0 group-hover:!opacity-50" />
+
+        {/* Add connected child */}
+        {!isDrawing && (
+          <button
+            className="absolute -right-3.5 -bottom-3.5 z-20 hidden h-7 w-7 items-center justify-center rounded-full border-2 border-background shadow-md transition-transform hover:scale-110 group-hover:flex"
+            style={{ backgroundColor: borderColor ?? "#6366f1" }}
+            onClick={(e) => { e.stopPropagation(); createChildNode(id); }}
+            title="Add connected node"
+          >
+            <Plus className="h-3.5 w-3.5 text-white" />
+          </button>
+        )}
 
         {/* Internal fill regions (clipped to node bounds) */}
         <div className="absolute inset-0 overflow-hidden" style={{ borderRadius: bRadius }}>
