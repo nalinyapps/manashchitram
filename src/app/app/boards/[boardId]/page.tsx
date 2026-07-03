@@ -7,6 +7,7 @@ import { useCanvasStore } from "@/store/canvas-store";
 import { CanvasTopbar } from "@/components/canvas/CanvasTopbar";
 import { CanvasToolbar } from "@/components/canvas/CanvasToolbar";
 import { CanvasInspector } from "@/components/canvas/CanvasInspector";
+import { LayoutPanel } from "@/components/canvas/LayoutPanel";
 import { CanvasStatusBar } from "@/components/canvas/CanvasStatusBar";
 import { VidyaCanvas } from "@/components/canvas/VidyaCanvas";
 import { SanskritToolsPanel } from "@/components/sanskrit/SanskritToolsPanel";
@@ -75,6 +76,13 @@ export default function BoardEditorPage() {
         <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
           <div className="pointer-events-auto">
             <CanvasToolbar />
+          </div>
+        </div>
+
+        {/* Floating layout panel (left, next to toolbar) */}
+        <div className="pointer-events-none absolute inset-y-0 left-16 flex items-start pt-3">
+          <div className="pointer-events-auto">
+            <LayoutPanel />
           </div>
         </div>
 

@@ -25,6 +25,8 @@ interface UIState {
   setTheme: (theme: "light" | "dark" | "system") => void;
   sanskritPanelOpen: boolean;
   setSanskritPanelOpen: (open: boolean) => void;
+  layoutPanelOpen: boolean;
+  setLayoutPanelOpen: (open: boolean) => void;
   searchPanelOpen: boolean;
   setSearchPanelOpen: (open: boolean) => void;
   commandPaletteOpen: boolean;
@@ -56,6 +58,8 @@ export const useUIStore = create<UIState>((set, get) => ({
   },
   sanskritPanelOpen: false,
   setSanskritPanelOpen: (open) => set({ sanskritPanelOpen: open }),
+  layoutPanelOpen: false,
+  setLayoutPanelOpen: (open) => set({ layoutPanelOpen: open }),
   searchPanelOpen: false,
   setSearchPanelOpen: (open) => set({ searchPanelOpen: open }),
   commandPaletteOpen: false,

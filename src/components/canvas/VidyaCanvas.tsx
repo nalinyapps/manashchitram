@@ -130,6 +130,13 @@ function VidyaCanvasInner({ boardId }: { boardId: string }) {
     if (saveStatus === "unsaved") debouncedSave();
   }, [saveStatus, debouncedSave]);
 
+  // Fit the view after an auto-layout is applied (dispatched from LayoutPanel).
+  useEffect(() => {
+    const handler = () => fitView({ padding: 0.2, duration: 400 });
+    window.addEventListener("vidya:fitview", handler);
+    return () => window.removeEventListener("vidya:fitview", handler);
+  }, [fitView]);
+
   // ── onNodesChange ──────────────────────────────────────────────────
   // KEY DESIGN:
   // - "dimensions" and "select" changes come from React Flow internally on
@@ -224,8 +231,8 @@ function VidyaCanvasInner({ boardId }: { boardId: string }) {
 
       switch (tool) {
         case "mindmap":
-          newNode = { id, type: "mindmap", position,
-            data: { text: "New Idea", scriptMode: "plain", color: "#818cf8", tags: [] },
+          newNode = { id, type: "shape", position,
+            data: { shapeType: "rounded", text: "New Idea", scriptMode: "plain", color: "#818cf8", tags: [] },
             style: { width: 180 } };
           break;
         case "sticky":

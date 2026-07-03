@@ -2,6 +2,7 @@
 
 import { memo, useState, useRef, useEffect } from "react";
 import { Handle, Position, NodeResizer, type NodeProps } from "@xyflow/react";
+import { Plus } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   getTextStyle, resolveFillColor, resolveBorderColor,
@@ -44,6 +45,7 @@ function ShapeNodeComponent({ id, data, selected }: NodeProps) {
   const dd = d as Record<string, unknown>;
   const updateNodeData = useCanvasStore((s) => s.updateNodeData);
   const pushHistory    = useCanvasStore((s) => s.pushHistory);
+  const createChildNode = useCanvasStore((s) => s.createChildNode);
 
   const drawingModeNodeId   = useUIStore((s) => s.drawingModeNodeId);
   const drawingRegionColor  = useUIStore((s) => s.drawingRegionColor);
@@ -85,9 +87,23 @@ function ShapeNodeComponent({ id, data, selected }: NodeProps) {
       <Handle type="source" position={Position.Right}  className="!opacity-0 hover:!opacity-70" />
 
       <div
-        className={cn("relative flex h-full w-full items-center justify-center", isDiamond && "rotate-45")}
+        className={cn("group relative flex h-full w-full items-center justify-center", isDiamond && "rotate-45")}
         onDoubleClick={() => { if (!isDrawing) setEditing(true); }}
       >
+        {/* Add connected child */}
+        {!isDrawing && (
+          <button
+            className={cn(
+              "absolute -right-3.5 -bottom-3.5 z-20 hidden h-7 w-7 items-center justify-center rounded-full border-2 border-background shadow-md transition-transform hover:scale-110 group-hover:flex",
+              isDiamond && "-rotate-45"
+            )}
+            style={{ backgroundColor: borderColor }}
+            onClick={(e) => { e.stopPropagation(); createChildNode(id); }}
+            title="Add connected node"
+          >
+            <Plus className="h-3.5 w-3.5 text-white" />
+          </button>
+        )}
         {hasClip ? (
           /* ── Clip-path shapes rendered as SVG so the border follows the outline ── */
           <svg

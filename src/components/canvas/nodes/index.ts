@@ -1,4 +1,3 @@
-import { MindMapNode } from "./MindMapNode";
 import { StickyNoteNode } from "./StickyNoteNode";
 import { TextBlockNode } from "./TextBlockNode";
 import { ShapeNode } from "./ShapeNode";
@@ -8,7 +7,9 @@ import { GrammarCardNode } from "./GrammarCardNode";
 import { FrameNode } from "./FrameNode";
 
 export const nodeTypes = {
-  mindmap: MindMapNode,
+  // Legacy "mindmap" nodes are migrated to shapes on load; alias to ShapeNode
+  // as a safety fallback so any stray mindmap node still renders consistently.
+  mindmap: ShapeNode,
   sticky: StickyNoteNode,
   text: TextBlockNode,
   shape: ShapeNode,
@@ -19,7 +20,6 @@ export const nodeTypes = {
 };
 
 export {
-  MindMapNode,
   StickyNoteNode,
   TextBlockNode,
   ShapeNode,

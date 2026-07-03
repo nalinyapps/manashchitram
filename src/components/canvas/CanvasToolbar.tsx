@@ -5,7 +5,7 @@ import {
   MousePointer2, Hand, StickyNote, Type, Square, Spline, Frame,
   BookOpen, Scroll, GraduationCap, ChevronRight,
   Circle, Triangle, Diamond, Hexagon, Star, ArrowRight,
-  RectangleHorizontal,
+  RectangleHorizontal, Network,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/components/ui/tooltip";
@@ -208,6 +208,31 @@ function SanskritBtn() {
   );
 }
 
+/* ── Layout panel toggle ── */
+function LayoutBtn() {
+  const layoutPanelOpen = useUIStore((s) => s.layoutPanelOpen);
+  const setLayoutPanelOpen = useUIStore((s) => s.setLayoutPanelOpen);
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          onClick={() => setLayoutPanelOpen(!layoutPanelOpen)}
+          className={cn(
+            "flex h-9 w-9 items-center justify-center rounded-lg transition-all duration-100",
+            layoutPanelOpen
+              ? "bg-primary text-primary-foreground shadow-sm"
+              : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+          )}
+          aria-label="Layouts"
+        >
+          <Network className="h-[18px] w-[18px] stroke-[1.5]" />
+        </button>
+      </TooltipTrigger>
+      <TooltipContent side="right" className="text-xs">Layouts</TooltipContent>
+    </Tooltip>
+  );
+}
+
 /* ── Main toolbar ── */
 export function CanvasToolbar() {
   const { setActiveTool } = useUIStore();
@@ -236,6 +261,11 @@ export function CanvasToolbar() {
           tool="connector"
         />
         <ToolBtn tool="frame"  icon={<Frame className="h-[18px] w-[18px] stroke-[1.5]" />}         label="Frame" />
+
+        <Divider />
+
+        {/* Layouts */}
+        <LayoutBtn />
 
         <Divider />
 
