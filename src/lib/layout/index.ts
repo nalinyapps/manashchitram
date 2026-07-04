@@ -20,23 +20,29 @@ const MIN_NODE_PADDING_Y = 48;
 const LEVEL_GAP_X = 260;
 const LEVEL_GAP_Y = 170;
 const LIST_ROW_GAP = 24;
-const LIST_DEPTH_INDENT = 180;
+const LIST_DEPTH_INDENT = 220;
 const LIST_SECTION_GAP = 40;
+const LIST_DEPTH_GAP = 72;
+const LIST_MIN_WIDTH = 220;
+const LIST_MAX_WIDTH = 420;
+const LIST_MIN_ROW_HEIGHT = 52;
+const LIST_MAX_ROW_HEIGHT = 120;
 const RADIAL_LEVEL_GAP = 280;
 const LINEAR_GAP = 120;
 
 // Matrix constants
-const MATRIX_MIN_COL_WIDTH = 150;
+const MATRIX_MIN_COL_WIDTH = 140;
 const MATRIX_CATEGORY_COL_WIDTH = 220;
-const MATRIX_DETAIL_MIN_WIDTH = 420;
-const MATRIX_MAX_DETAIL_WIDTH = 760;
-const MATRIX_MIN_ROW_HEIGHT = 42;
+const MATRIX_ITEM_COL_WIDTH = 230;
+const MATRIX_DETAIL_MIN_WIDTH = 320;
+const MATRIX_MAX_DETAIL_WIDTH = 680;
+const MATRIX_MIN_ROW_HEIGHT = 46;
 const MATRIX_HEADER_GAP = 4;
 const MATRIX_CELL_PAD_X = 18;
 const MATRIX_CELL_PAD_Y = 10;
-const MATRIX_CELL_GAP_X = 4;
-const MATRIX_CELL_GAP_Y = 4;
-const MATRIX_HEADER_HEIGHT = 48;
+const MATRIX_CELL_GAP_X = 2;
+const MATRIX_CELL_GAP_Y = 2;
+const MATRIX_HEADER_HEIGHT = 58;
 const MATRIX_MAX_NATURAL_CELL_HEIGHT = 180;
 
 const DEFAULT_W = 180;
@@ -115,32 +121,51 @@ function textMetric(node: Node): { text: string; fontSize: number; charWidth: nu
   };
 }
 
-function matrixNaturalWidth(node: Node, col: number, maxCols: number): number {
+function textBoxWidth(node: Node, minWidth: number, maxWidth: number): number {
   const { text, charWidth } = textMetric(node);
-  const { w } = sizeOf(node);
-  const textWidth = Math.max(...text.split(/\s+/).map((part) => part.length), Math.min(text.length, 42)) * charWidth + MATRIX_CELL_PAD_X * 2;
-  const customWidth = w > DEFAULT_W + 80 ? w + MATRIX_CELL_PAD_X : 0;
-
-  if (col === 0 && maxCols > 1) {
-    return clamp(Math.max(textWidth, customWidth, MATRIX_CATEGORY_COL_WIDTH), MATRIX_CATEGORY_COL_WIDTH, 340);
-  }
-  if (col === maxCols - 1 || maxCols === 1) {
-    return clamp(Math.max(textWidth, customWidth, MATRIX_DETAIL_MIN_WIDTH), MATRIX_DETAIL_MIN_WIDTH, MATRIX_MAX_DETAIL_WIDTH);
-  }
-  return clamp(Math.max(textWidth, customWidth, MATRIX_MIN_COL_WIDTH), MATRIX_MIN_COL_WIDTH, 300);
+  const words = text.split(/\s+/).filter(Boolean);
+  const longestWord = words.reduce((max, word) => Math.max(max, word.length), 0);
+  const preferredChars = Math.min(Math.max(longestWord + 8, Math.ceil(text.length * 0.55)), 48);
+  return clamp(Math.ceil(preferredChars * charWidth + MATRIX_CELL_PAD_X * 2), minWidth, maxWidth);
 }
 
-function matrixNaturalHeight(node: Node, width: number, minHeight = MATRIX_MIN_ROW_HEIGHT): number {
+function textBoxHeight(node: Node, width: number, minHeight: number, maxHeight: number): number {
   const { text, charWidth, lineHeight } = textMetric(node);
-  const { h } = sizeOf(node);
   const usableWidth = Math.max(48, width - MATRIX_CELL_PAD_X * 2);
   const charsPerLine = Math.max(8, Math.floor(usableWidth / charWidth));
   const lines = text
     .split(/\n/)
     .reduce((sum, line) => sum + Math.max(1, Math.ceil(line.length / charsPerLine)), 0);
-  const textHeight = lines * lineHeight + MATRIX_CELL_PAD_Y * 2;
-  const customHeight = h > DEFAULT_H + 40 ? h + MATRIX_CELL_PAD_Y : 0;
-  return clamp(Math.max(minHeight, textHeight, customHeight), minHeight, MATRIX_MAX_NATURAL_CELL_HEIGHT);
+  return clamp(Math.ceil(lines * lineHeight + MATRIX_CELL_PAD_Y * 2), minHeight, maxHeight);
+}
+
+function matrixNaturalWidth(node: Node, col: number, maxCols: number): number {
+  const itemMax = maxCols === 2 ? 420 : 300;
+  if (col === 0 && maxCols > 1) {
+    return textBoxWidth(node, MATRIX_CATEGORY_COL_WIDTH, 340);
+  }
+  if (maxCols === 1) {
+    return textBoxWidth(node, MATRIX_DETAIL_MIN_WIDTH, MATRIX_MAX_DETAIL_WIDTH);
+  }
+  if (maxCols === 2) {
+    return textBoxWidth(node, MATRIX_ITEM_COL_WIDTH, itemMax);
+  }
+  if (col === maxCols - 1) {
+    return textBoxWidth(node, MATRIX_DETAIL_MIN_WIDTH, MATRIX_MAX_DETAIL_WIDTH);
+  }
+  return textBoxWidth(node, MATRIX_MIN_COL_WIDTH, 300);
+}
+
+function matrixNaturalHeight(node: Node, width: number, minHeight = MATRIX_MIN_ROW_HEIGHT): number {
+  return textBoxHeight(node, width, minHeight, MATRIX_MAX_NATURAL_CELL_HEIGHT);
+}
+
+function listNaturalWidth(node: Node): number {
+  return textBoxWidth(node, LIST_MIN_WIDTH, LIST_MAX_WIDTH);
+}
+
+function listNaturalHeight(node: Node, width: number): number {
+  return textBoxHeight(node, width, LIST_MIN_ROW_HEIGHT, LIST_MAX_ROW_HEIGHT);
 }
 
 // -- Collision resolution (structure-preserving, axis-constrained) ------------
@@ -158,7 +183,13 @@ function resolveCollisions(
   const ids = Object.keys(positions);
   const rect = (id: string): NodeRect => {
     const { w, h } = sizeOf(byId.get(id)!);
-    return { id, x: positions[id].x, y: positions[id].y, width: w, height: h };
+    return {
+      id,
+      x: positions[id].x,
+      y: positions[id].y,
+      width: positions[id].width ?? w,
+      height: positions[id].height ?? h,
+    };
   };
   for (let it = 0; it < iterations; it++) {
     let moved = false;
@@ -421,6 +452,7 @@ function matrixLayout(rootId: string, hierarchy: Hierarchy, byId: Map<string, No
     const widest = Math.max(...ids.map((id) => matrixNaturalWidth(byId.get(id)!, col, maxCols)), 0);
     if (maxCols === 1) return Math.max(widest, MATRIX_DETAIL_MIN_WIDTH);
     if (col === 0) return Math.max(widest, MATRIX_CATEGORY_COL_WIDTH);
+    if (maxCols === 2) return Math.max(widest, MATRIX_ITEM_COL_WIDTH);
     if (col === maxCols - 1) return Math.max(widest, MATRIX_DETAIL_MIN_WIDTH);
     return Math.max(widest, MATRIX_MIN_COL_WIDTH);
   });
@@ -529,20 +561,36 @@ export function computeLayout(
       resolveCollisions(pos, byId, "y");
       Object.assign(result, pos);
     } else if (mode === "list") {
-      let y = rootNode.position.y;
-      let prevDepth1: string | null = null;
+      const rows: Array<{ id: string; depth: number; sectionBreak: boolean }> = [];
       const seen = new Set<string>();
       const walk = (id: string, depth: number) => {
         if (seen.has(id)) return;
         seen.add(id);
-        const { h } = sizeOf(byId.get(id)!);
-        if (depth === 1 && prevDepth1 !== null) y += LIST_SECTION_GAP;
-        result[id] = { x: rootNode.position.x + depth * LIST_DEPTH_INDENT, y };
-        y += h + LIST_ROW_GAP;
-        if (depth === 1) prevDepth1 = id;
+        const sectionBreak = depth === 1 && rows.some((row) => row.depth === 1);
+        rows.push({ id, depth, sectionBreak });
         for (const c of hierarchy.get(id)?.childIds ?? []) walk(c, depth + 1);
       };
       walk(root, 0);
+
+      const maxDepth = Math.max(...rows.map((row) => row.depth), 0);
+      const depthWidth = Array.from({ length: maxDepth + 1 }, (_, depth) => {
+        const ids = rows.filter((row) => row.depth === depth).map((row) => row.id);
+        return Math.max(...ids.map((id) => listNaturalWidth(byId.get(id)!)), LIST_MIN_WIDTH);
+      });
+      const depthX: number[] = [rootNode.position.x];
+      for (let depth = 1; depth <= maxDepth; depth++) {
+        const previousWidth = depthWidth[depth - 1] ?? LIST_MIN_WIDTH;
+        depthX[depth] = depthX[depth - 1] + Math.max(LIST_DEPTH_INDENT, previousWidth + LIST_DEPTH_GAP);
+      }
+
+      let y = rootNode.position.y;
+      for (const row of rows) {
+        if (row.sectionBreak) y += LIST_SECTION_GAP;
+        const width = depthWidth[row.depth] ?? LIST_MIN_WIDTH;
+        const height = listNaturalHeight(byId.get(row.id)!, width);
+        result[row.id] = { x: depthX[row.depth], y, width, height };
+        y += height + LIST_ROW_GAP;
+      }
       resolveCollisions(result, byId, "y", MIN_NODE_PADDING_X, LIST_ROW_GAP);
     } else if (mode === "linear") {
       const order = getSubtree(root, hierarchy);

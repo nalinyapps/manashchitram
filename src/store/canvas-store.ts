@@ -127,7 +127,7 @@ function withMatrixFrame(nodes: Node[], scopeIds: Set<string>, key: string, enab
   const minY = Math.min(...rects.map((r) => r.y));
   const maxX = Math.max(...rects.map((r) => r.x + r.width));
   const maxY = Math.max(...rects.map((r) => r.y + r.height));
-  const pad = 12;
+  const pad = 6;
   const frame: Node = {
     id: `matrix-frame-${key}`,
     type: "frame",
