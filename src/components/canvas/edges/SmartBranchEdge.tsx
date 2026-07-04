@@ -5,15 +5,28 @@ import {
   BaseEdge,
   EdgeLabelRenderer,
   getBezierPath,
-  getSmoothStepPath,
-  getStraightPath,
+  useNodes,
+  Position,
   type EdgeProps,
 } from "@xyflow/react";
 import type { VidyaEdgeData } from "@/lib/types";
-import { SmartBranchEdge } from "./SmartBranchEdge";
+import { getNodeRect, type NodeRect } from "@/lib/layout";
+import { routeOrthogonalEdge, type Side } from "@/lib/layout/edge-routing";
 
-function VidyaEdgeComponent({
+function toSide(p: Position): Side {
+  switch (p) {
+    case Position.Top: return "top";
+    case Position.Right: return "right";
+    case Position.Bottom: return "bottom";
+    case Position.Left: return "left";
+    default: return "right";
+  }
+}
+
+function SmartBranchEdgeComponent({
   id,
+  source,
+  target,
   sourceX,
   sourceY,
   targetX,
@@ -26,31 +39,34 @@ function VidyaEdgeComponent({
 }: EdgeProps) {
   const d = (data ?? {}) as VidyaEdgeData;
   const curveStyle = d.curveStyle ?? "smooth";
+  const nodes = useNodes();
 
   let path: string;
   let labelX: number;
   let labelY: number;
 
-  if (curveStyle === "straight") {
-    [path, labelX, labelY] = getStraightPath({ sourceX, sourceY, targetX, targetY });
-  } else if (curveStyle === "step") {
-    [path, labelX, labelY] = getSmoothStepPath({
-      sourceX,
-      sourceY,
-      targetX,
-      targetY,
-      sourcePosition,
-      targetPosition,
+  if (curveStyle === "smooth") {
+    // Curved routing for radial / free-form - clean bezier, no obstacle solve.
+    [path, labelX, labelY] = getBezierPath({
+      sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition,
     });
   } else {
-    [path, labelX, labelY] = getBezierPath({
-      sourceX,
-      sourceY,
-      targetX,
-      targetY,
-      sourcePosition,
-      targetPosition,
-    });
+    // Structured layouts -> orthogonal routing that avoids other node boxes.
+    const obstacles: NodeRect[] = [];
+    for (const n of nodes) {
+      if (n.id === source || n.id === target) continue;
+      obstacles.push(getNodeRect(n));
+    }
+    const routed = routeOrthogonalEdge(
+      { x: sourceX, y: sourceY },
+      { x: targetX, y: targetY },
+      toSide(sourcePosition),
+      toSide(targetPosition),
+      obstacles
+    );
+    path = routed.path;
+    labelX = routed.labelX;
+    labelY = routed.labelY;
   }
 
   return (
@@ -83,15 +99,4 @@ function VidyaEdgeComponent({
   );
 }
 
-export const VidyaEdge = memo(VidyaEdgeComponent);
-
-export const BranchEdge = SmartBranchEdge;
-export const LabeledEdge = memo(VidyaEdgeComponent);
-export const SanskritEdge = memo(VidyaEdgeComponent);
-
-export const edgeTypes = {
-  default: VidyaEdge,
-  branch: BranchEdge,
-  labeled: LabeledEdge,
-  sanskrit: SanskritEdge,
-};
+export const SmartBranchEdge = memo(SmartBranchEdgeComponent);

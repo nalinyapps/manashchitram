@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ReactFlow,
   Background,
@@ -10,6 +10,7 @@ import {
   useReactFlow,
   useViewport,
   ReactFlowProvider,
+  type Connection,
   type Node,
   type Edge,
   type OnNodesChange,
@@ -30,6 +31,7 @@ import { updateBoard } from "@/lib/storage/board-store";
 import { AUTOSAVE_DELAY_MS } from "@/lib/config";
 import type { BoardContent } from "@/lib/types";
 import { debounce } from "@/lib/utils";
+import { resolveInsertedNodeCollisions, routeForMode, type LayoutMode } from "@/lib/layout";
 
 // ── Alignment guide types ──────────────────────────────────────────────────
 interface Guides { h: number[]; v: number[] }
@@ -99,12 +101,12 @@ function VidyaCanvasInner({ boardId }: { boardId: string }) {
   const activeTool  = useUIStore((s) => s.activeTool);
 
   const { screenToFlowPosition, fitView, zoomIn, zoomOut } = useReactFlow();
-  const spacePressed = useRef(false);
+  const [spacePressed, setSpacePressed] = useState(false);
   const [guides, setGuides] = useState<Guides>({ h: [], v: [] });
 
   // Debounced autosave — reads state directly, no subscriptions
-  const debouncedSave = useRef(
-    debounce(async () => {
+  const debouncedSave = useMemo(
+    () => debounce(async () => {
       const s = useCanvasStore.getState();
       if (!s.board || s.saveStatus === "saved") return;
       s.setSaveStatus("saving");
@@ -123,8 +125,9 @@ function VidyaCanvasInner({ boardId }: { boardId: string }) {
       } catch {
         useCanvasStore.getState().setSaveStatus("error");
       }
-    }, AUTOSAVE_DELAY_MS)
-  ).current;
+    }, AUTOSAVE_DELAY_MS),
+    [boardId]
+  );
 
   useEffect(() => {
     if (saveStatus === "unsaved") debouncedSave();
@@ -210,26 +213,79 @@ function VidyaCanvasInner({ boardId }: { boardId: string }) {
     }) => {
       const cs = useCanvasStore.getState();
       cs.pushHistory();
+      const source = cs.nodes.find((n) => n.id === connection.source);
+      const targetNode = cs.nodes.find((n) => n.id === connection.target);
+      const mode = ((source?.data as { layoutMode?: LayoutMode } | undefined)?.layoutMode ?? "freeForm") as LayoutMode;
+      const route = source && targetNode ? routeForMode(mode, source, targetNode) : null;
       const newEdge: Edge = {
         id: generateId(),
         source: connection.source,
         target: connection.target,
-        sourceHandle: connection.sourceHandle ?? undefined,
-        targetHandle: connection.targetHandle ?? undefined,
+        sourceHandle: connection.sourceHandle ?? route?.sourceHandle ?? undefined,
+        targetHandle: connection.targetHandle ?? route?.targetHandle ?? undefined,
         type: "branch",
+        reconnectable: true,
         markerEnd: { type: MarkerType.ArrowClosed, color: "#6366f1" },
-        data: { edgeType: "branch", curveStyle: "smooth" },
+        data: { edgeType: "branch", curveStyle: route?.curveStyle ?? "smooth" },
       };
       // Record parent→child relationship if the target has no parent yet.
-      const target = cs.nodes.find((n) => n.id === connection.target);
-      const hasParent = target && (target.data as { parentId?: string | null }).parentId;
-      if (target && !hasParent) {
+      const hasParent = targetNode && (targetNode.data as { parentId?: string | null }).parentId;
+      if (targetNode && !hasParent) {
         cs.updateNodeData(connection.target, { parentId: connection.source });
       }
       setEdges((eds) => [...eds, newEdge]);
     },
     [setEdges]
   );
+
+  const onReconnect = useCallback((oldEdge: Edge, connection: Connection) => {
+    const cs = useCanvasStore.getState();
+    const source = cs.nodes.find((n) => n.id === connection.source);
+    const target = cs.nodes.find((n) => n.id === connection.target);
+    if (!source || !target || source.id === target.id) return;
+
+    cs.pushHistory();
+    const mode = ((source.data as { layoutMode?: LayoutMode } | undefined)?.layoutMode ?? "freeForm") as LayoutMode;
+    const route = routeForMode(mode, source, target);
+
+    const nextEdges = cs.edges.map((edge) => {
+      if (edge.id !== oldEdge.id) return edge;
+      return {
+        ...edge,
+        source: connection.source,
+        target: connection.target,
+        sourceHandle: connection.sourceHandle ?? route.sourceHandle,
+        targetHandle: connection.targetHandle ?? route.targetHandle,
+        reconnectable: true,
+        markerEnd: edge.markerEnd ?? { type: MarkerType.ArrowClosed, color: "#6366f1" },
+        data: { ...(edge.data ?? {}), edgeType: "branch", curveStyle: route.curveStyle },
+      };
+    });
+
+    const nextNodes = cs.nodes.map((node) => {
+      const data = node.data as Record<string, unknown>;
+      if (node.id === oldEdge.target && oldEdge.target !== connection.target) {
+        return { ...node, data: { ...data, parentId: null } };
+      }
+      if (node.id === oldEdge.source || node.id === connection.source) {
+        const withoutOldTarget = ((data.childOrder as string[] | undefined) ?? []).filter((id) => id !== oldEdge.target);
+        if (node.id !== connection.source) return { ...node, data: { ...data, childOrder: withoutOldTarget } };
+        return {
+          ...node,
+          data: {
+            ...data,
+            childOrder: withoutOldTarget.includes(connection.target) ? withoutOldTarget : [...withoutOldTarget, connection.target],
+          },
+        };
+      }
+      if (node.id === connection.target) {
+        return { ...node, data: { ...data, parentId: connection.source } };
+      }
+      return node;
+    });
+
+    useCanvasStore.setState({ nodes: nextNodes, edges: nextEdges, saveStatus: "unsaved" });
+  }, []);
 
   const onPaneClick = useCallback(
     (event: React.MouseEvent) => {
@@ -284,7 +340,11 @@ function VidyaCanvasInner({ boardId }: { boardId: string }) {
       }
 
       if (newNode) {
-        setNodes((nds) => [...nds, newNode!]);
+        setNodes((nds) => {
+          const next = [...nds, newNode!];
+          const placements = resolveInsertedNodeCollisions(next, newNode!.id);
+          return next.map((n) => placements[n.id] ? { ...n, position: placements[n.id] } : n);
+        });
         useUIStore.getState().setActiveTool("select");
       }
     },
@@ -299,7 +359,7 @@ function VidyaCanvasInner({ boardId }: { boardId: string }) {
       const target = e.target as HTMLElement;
       if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable) return;
 
-      if (e.code === "Space") { spacePressed.current = true; e.preventDefault(); return; }
+      if (e.code === "Space") { setSpacePressed(true); e.preventDefault(); return; }
 
       const mod = e.metaKey || e.ctrlKey;
       const cs  = useCanvasStore.getState();
@@ -330,7 +390,7 @@ function VidyaCanvasInner({ boardId }: { boardId: string }) {
       if (mod && e.key === "f" && !e.shiftKey) { e.preventDefault(); ui.setSearchPanelOpen(true); }
     };
 
-    const handleKeyUp = (e: KeyboardEvent) => { if (e.code === "Space") spacePressed.current = false; };
+    const handleKeyUp = (e: KeyboardEvent) => { if (e.code === "Space") setSpacePressed(false); };
 
     window.addEventListener("keydown", handleKeyDown);
     window.addEventListener("keyup", handleKeyUp);
@@ -351,17 +411,20 @@ function VidyaCanvasInner({ boardId }: { boardId: string }) {
       onNodesChange={onNodesChange}
       onEdgesChange={onEdgesChange}
       onConnect={onConnect}
+      onReconnect={onReconnect}
       onPaneClick={onPaneClick}
       onNodeDrag={onNodeDrag}
       onNodeDragStop={onNodeDragStop}
       nodeTypes={nodeTypes}
       edgeTypes={edgeTypes}
       connectionMode={ConnectionMode.Loose}
+      edgesReconnectable
+      reconnectRadius={14}
       fitView
       fitViewOptions={{ padding: 0.2, maxZoom: 1.5 }}
       snapToGrid={settings.snapToGrid}
       snapGrid={[settings.gridSize ?? 20, settings.gridSize ?? 20]}
-      panOnDrag={activeTool === "pan" || spacePressed.current ? [0, 1, 2] : [1, 2]}
+      panOnDrag={activeTool === "pan" || spacePressed ? [0, 1, 2] : [1, 2]}
       selectionOnDrag={activeTool === "select"}
       panOnScroll
       zoomOnScroll

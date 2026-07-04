@@ -1,8 +1,6 @@
 import type { Node, Edge } from "@xyflow/react";
 import type { LayoutMode } from "@/lib/types";
-import {
-  buildHierarchy, getSubtree, getRoots, type Hierarchy,
-} from "./hierarchy";
+import { buildHierarchy, getSubtree, getRoots, type Hierarchy } from "./hierarchy";
 
 export type { LayoutMode };
 
@@ -12,28 +10,77 @@ export interface LayoutOptions {
 }
 
 type Pos = { x: number; y: number };
-type Positions = Record<string, Pos>;
+export type LayoutPlacement = Pos & { width?: number; height?: number };
+type Positions = Record<string, LayoutPlacement>;
 type Side = "top" | "right" | "bottom" | "left";
 
-// ── Spacing constants (flow units) ─────────────────────────────────────────
-const NODE_GAP_X = 80;
-const NODE_GAP_Y = 56;
-const LEVEL_GAP_X = 220;   // horizontal: distance between depth columns
-const LEVEL_GAP_Y = 140;   // vertical/top-down: distance between depth rows
-const LIST_INDENT = 60;
-const LIST_ROW = 20;
-const RADIAL_LEVEL_GAP = 240;
-const MATRIX_GAP_X = 60;
-const MATRIX_GAP_Y = 60;
-const LINEAR_GAP = 90;
+// -- Spacing constants (generous by design - clarity over compactness) --------
+const MIN_NODE_PADDING_X = 80;
+const MIN_NODE_PADDING_Y = 48;
+const LEVEL_GAP_X = 260;
+const LEVEL_GAP_Y = 170;
+const LIST_ROW_GAP = 24;
+const LIST_DEPTH_INDENT = 180;
+const LIST_SECTION_GAP = 40;
+const RADIAL_LEVEL_GAP = 280;
+const LINEAR_GAP = 120;
+
+// Matrix constants
+const MATRIX_MIN_COL_WIDTH = 180;
+const MATRIX_CATEGORY_COL_WIDTH = 260;
+const MATRIX_DETAIL_MIN_WIDTH = 520;
+const MATRIX_MIN_ROW_HEIGHT = 72;
+const MATRIX_HEADER_GAP = 56;
+const MATRIX_CELL_PAD_X = 28;
+const MATRIX_CELL_PAD_Y = 20;
+const MATRIX_CELL_GAP_X = 8;
+const MATRIX_CELL_GAP_Y = 8;
+const MATRIX_SECTION_GAP_Y = 36;
+const MATRIX_HEADER_HEIGHT = 64;
 
 const DEFAULT_W = 180;
 const DEFAULT_H = 80;
 
-function sizeOf(node: Node): { w: number; h: number } {
-  const w = (node.measured?.width  ?? (node.style?.width  as number) ?? DEFAULT_W) as number;
-  const h = (node.measured?.height ?? (node.style?.height as number) ?? DEFAULT_H) as number;
+// -- Rect / size helpers ------------------------------------------------------
+
+export interface NodeRect { id: string; x: number; y: number; width: number; height: number }
+
+function dimension(value: unknown, fallback: number): number {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const parsed = Number.parseFloat(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return fallback;
+}
+
+export function sizeOf(node: Node): { w: number; h: number } {
+  const w = dimension(node.measured?.width ?? node.style?.width, DEFAULT_W);
+  const h = dimension(node.measured?.height ?? node.style?.height, DEFAULT_H);
   return { w, h };
+}
+
+export function getNodeRect(node: Node): NodeRect {
+  const { w, h } = sizeOf(node);
+  return { id: node.id, x: node.position.x, y: node.position.y, width: w, height: h };
+}
+
+export function rectsOverlap(a: NodeRect, b: NodeRect, pad = 0): boolean {
+  return (
+    a.x - pad < b.x + b.width &&
+    a.x + a.width + pad > b.x &&
+    a.y - pad < b.y + b.height &&
+    a.y + a.height + pad > b.y
+  );
+}
+
+function rectsTooClose(a: NodeRect, b: NodeRect, padX: number, padY: number): boolean {
+  return (
+    a.x - padX < b.x + b.width &&
+    a.x + a.width + padX > b.x &&
+    a.y - padY < b.y + b.height &&
+    a.y + a.height + padY > b.y
+  );
 }
 
 function centerOf(node: Node): Pos {
@@ -41,70 +88,182 @@ function centerOf(node: Node): Pos {
   return { x: node.position.x + w / 2, y: node.position.y + h / 2 };
 }
 
-// ── Tidy tree (vertical or horizontal growth) with real node sizes ──────────
-// Cross-axis packing uses a running cursor over leaf sizes so subtrees never
-// overlap; parents are centered over their children.
+// -- Collision resolution (structure-preserving, axis-constrained) ------------
+// Pushes overlapping nodes apart along a single axis so the layout's primary
+// structure (rows/columns) is preserved.
 
-interface TreeOpts {
-  axis: "v" | "h";     // growth direction
-  levelGap: number;    // distance between depth levels along the growth axis
-  strictRows: boolean; // true → all nodes at a depth share the same main-axis coord
+function resolveCollisions(
+  positions: Positions,
+  byId: Map<string, Node>,
+  axis: "x" | "y",
+  padX = MIN_NODE_PADDING_X,
+  padY = MIN_NODE_PADDING_Y,
+  iterations = 8
+): void {
+  const ids = Object.keys(positions);
+  const rect = (id: string): NodeRect => {
+    const { w, h } = sizeOf(byId.get(id)!);
+    return { id, x: positions[id].x, y: positions[id].y, width: w, height: h };
+  };
+  for (let it = 0; it < iterations; it++) {
+    let moved = false;
+    for (let i = 0; i < ids.length; i++) {
+      for (let j = i + 1; j < ids.length; j++) {
+        const a = rect(ids[i]);
+        const b = rect(ids[j]);
+        if (!rectsTooClose(a, b, padX, padY)) continue;
+        if (axis === "y") {
+          const overlap = Math.min(a.y + a.height + padY, b.y + b.height + padY) - Math.max(a.y, b.y);
+          const lower = a.y <= b.y ? ids[j] : ids[i];
+          positions[lower].y += overlap;
+        } else {
+          const overlap = Math.min(a.x + a.width + padX, b.x + b.width + padX) - Math.max(a.x, b.x);
+          const right = a.x <= b.x ? ids[j] : ids[i];
+          positions[right].x += overlap;
+        }
+        moved = true;
+      }
+    }
+    if (!moved) break;
+  }
 }
+
+export function resolveInsertedNodeCollisions(
+  nodes: Node[],
+  insertedId: string,
+  padX = MIN_NODE_PADDING_X,
+  padY = MIN_NODE_PADDING_Y
+): Positions {
+  const inserted = nodes.find((n) => n.id === insertedId);
+  if (!inserted) return {};
+
+  const byId = new Map(nodes.map((n) => [n.id, n]));
+  const positions: Positions = {};
+  for (const n of nodes) positions[n.id] = { ...n.position };
+
+  const rect = (id: string): NodeRect => {
+    const n = byId.get(id)!;
+    const { w, h } = sizeOf(n);
+    return { id, x: positions[id].x, y: positions[id].y, width: w, height: h };
+  };
+
+  for (let iteration = 0; iteration < 10; iteration++) {
+    let moved = false;
+    const anchor = rect(insertedId);
+    for (const node of nodes) {
+      if (node.id === insertedId) continue;
+      const other = rect(node.id);
+      if (!rectsTooClose(anchor, other, padX, padY)) continue;
+      const pushBelow = other.y + other.height / 2 >= anchor.y + anchor.height / 2;
+      if (pushBelow) {
+        positions[node.id].y = Math.max(positions[node.id].y, anchor.y + anchor.height + padY);
+      } else {
+        positions[node.id].y = Math.min(positions[node.id].y, anchor.y - other.height - padY);
+      }
+      moved = true;
+    }
+    resolveCollisions(positions, byId, "y", padX, padY, 3);
+    if (!moved) break;
+  }
+
+  const changed: Positions = {};
+  for (const n of nodes) {
+    const p = positions[n.id];
+    if (p.x !== n.position.x || p.y !== n.position.y) changed[n.id] = p;
+  }
+  return changed;
+}
+
+// -- Tidy tree with adaptive, content-aware level spacing ---------------------
+// - Cross axis: leaf cursor packs siblings using real node sizes (no overlap).
+// - Main axis: each depth band is offset by the tallest/widest node at that
+//   depth + a generous level gap (prevents cross-depth overlap for tall nodes).
 
 function tidyTree(
   rootId: string,
   hierarchy: Hierarchy,
   byId: Map<string, Node>,
-  opts: TreeOpts
+  axis: "v" | "h"
 ): Positions {
-  const centers: Positions = {}; // center coordinates, root-relative
+  const depthMaxMain = new Map<number, number>();
+  const collect = (id: string, depth: number) => {
+    const { w, h } = sizeOf(byId.get(id)!);
+    const main = axis === "v" ? h : w;
+    depthMaxMain.set(depth, Math.max(depthMaxMain.get(depth) ?? 0, main));
+    for (const c of hierarchy.get(id)?.childIds ?? []) collect(c, depth + 1);
+  };
+  collect(rootId, 0);
+
+  const levelGap = axis === "v" ? LEVEL_GAP_Y : LEVEL_GAP_X;
+  const maxDepth = Math.max(...depthMaxMain.keys());
+  const levelCenter = new Map<number, number>();
+  let acc = 0;
+  for (let d = 0; d <= maxDepth; d++) {
+    const band = depthMaxMain.get(d) ?? (axis === "v" ? DEFAULT_H : DEFAULT_W);
+    levelCenter.set(d, acc + band / 2);
+    acc += band + levelGap;
+  }
+
+  const crossGap = axis === "v" ? MIN_NODE_PADDING_X : MIN_NODE_PADDING_Y;
+  const centers: Positions = {};
   let cursor = 0;
 
-  // Precompute per-depth main-axis offset for strict rows.
   const walk = (id: string, depth: number): number => {
-    const node = byId.get(id)!;
-    const { w, h } = sizeOf(node);
-    const crossSize = opts.axis === "v" ? w : h;
+    const { w, h } = sizeOf(byId.get(id)!);
+    const crossSize = axis === "v" ? w : h;
     const kids = hierarchy.get(id)?.childIds ?? [];
-
     let cross: number;
     if (kids.length === 0) {
       cross = cursor + crossSize / 2;
-      cursor += crossSize + (opts.axis === "v" ? NODE_GAP_X : NODE_GAP_Y);
+      cursor += crossSize + crossGap;
     } else {
-      const kidCross = kids.map((c) => walk(c, depth + 1));
-      cross = (kidCross[0] + kidCross[kidCross.length - 1]) / 2;
+      const cc = kids.map((c) => walk(c, depth + 1));
+      cross = (cc[0] + cc[cc.length - 1]) / 2;
     }
-
-    const main = depth * opts.levelGap;
-    if (opts.axis === "v") centers[id] = { x: cross, y: main };
-    else centers[id] = { x: main, y: cross };
+    const main = levelCenter.get(depth)!;
+    centers[id] = axis === "v" ? { x: cross, y: main } : { x: main, y: cross };
     return cross;
   };
-
   walk(rootId, 0);
   return centers;
 }
 
-// ── Radial: root center, children in angular sectors sized by leaf count ─────
+// -- Radial with per-depth radius sized to fit all nodes on the ring ----------
 
-function leafCounts(rootId: string, hierarchy: Hierarchy): Map<string, number> {
-  const counts = new Map<string, number>();
-  const calc = (id: string): number => {
-    const kids = hierarchy.get(id)?.childIds ?? [];
-    if (!kids.length) { counts.set(id, 1); return 1; }
-    let sum = 0;
-    for (const c of kids) sum += calc(c);
-    counts.set(id, sum);
-    return sum;
-  };
-  calc(rootId);
-  return counts;
-}
-
-function radialTree(rootId: string, hierarchy: Hierarchy): Positions {
+function radialTree(rootId: string, hierarchy: Hierarchy, byId: Map<string, Node>): Positions {
   const centers: Positions = { [rootId]: { x: 0, y: 0 } };
-  const leaves = leafCounts(rootId, hierarchy);
+
+  // Leaf counts drive angular allocation.
+  const leaves = new Map<string, number>();
+  const calcLeaves = (id: string): number => {
+    const kids = hierarchy.get(id)?.childIds ?? [];
+    if (!kids.length) { leaves.set(id, 1); return 1; }
+    let s = 0;
+    for (const c of kids) s += calcLeaves(c);
+    leaves.set(id, s);
+    return s;
+  };
+  calcLeaves(rootId);
+
+  // Nodes + max node size per depth -> radius large enough to avoid overlap.
+  const depthNodes = new Map<number, string[]>();
+  const collect = (id: string, depth: number) => {
+    if (!depthNodes.has(depth)) depthNodes.set(depth, []);
+    depthNodes.get(depth)!.push(id);
+    for (const c of hierarchy.get(id)?.childIds ?? []) collect(c, depth + 1);
+  };
+  collect(rootId, 0);
+
+  const radiusAt = new Map<number, number>();
+  radiusAt.set(0, 0);
+  const maxDepth = Math.max(...depthNodes.keys());
+  for (let d = 1; d <= maxDepth; d++) {
+    const ids = depthNodes.get(d) ?? [];
+    const maxCross = Math.max(...ids.map((id) => sizeOf(byId.get(id)!).w), DEFAULT_W);
+    // Circumference must fit all nodes with padding.
+    const needed = (ids.length * (maxCross + MIN_NODE_PADDING_X)) / (2 * Math.PI);
+    radiusAt.set(d, Math.max(d * RADIAL_LEVEL_GAP, needed, (radiusAt.get(d - 1) ?? 0) + RADIAL_LEVEL_GAP));
+  }
 
   const place = (id: string, a0: number, a1: number, depth: number) => {
     const kids = hierarchy.get(id)?.childIds ?? [];
@@ -116,24 +275,19 @@ function radialTree(rootId: string, hierarchy: Hierarchy): Positions {
       const start = a;
       const end = a + (a1 - a0) * frac;
       const mid = (start + end) / 2;
-      const r = RADIAL_LEVEL_GAP * depth;
+      const r = radiusAt.get(depth) ?? depth * RADIAL_LEVEL_GAP;
       centers[c] = { x: Math.cos(mid) * r, y: Math.sin(mid) * r };
       place(c, start, end, depth + 1);
       a = end;
     }
   };
-
   place(rootId, -Math.PI / 2, Math.PI * 1.5, 1);
   return centers;
 }
 
-// ── Convert center coords → top-left positions, anchored so root stays put ──
+// -- Center coords -> top-left, anchored so the root stays fixed ---------------
 
-function centersToPositions(
-  centers: Positions,
-  rootId: string,
-  byId: Map<string, Node>
-): Positions {
+function centersToPositions(centers: Positions, rootId: string, byId: Map<string, Node>): Positions {
   const rootNode = byId.get(rootId)!;
   const rootCenter = centerOf(rootNode);
   const rc = centers[rootId] ?? { x: 0, y: 0 };
@@ -148,7 +302,150 @@ function centersToPositions(
   return out;
 }
 
-// ── Public: compute positions ────────────────────────────────────────────────
+// -- Matrix: hierarchy-aware chart / table ------------------------------------
+
+function matrixLayout(rootId: string, hierarchy: Hierarchy, byId: Map<string, Node>): Positions {
+  const out: Positions = {};
+  const rootNode = byId.get(rootId)!;
+  const rootCenter = centerOf(rootNode);
+  const startY = rootNode.position.y;
+  const rootSize = sizeOf(rootNode);
+
+  const categories = hierarchy.get(rootId)?.childIds ?? [];
+  const hasGrandchildren = categories.some((c) => (hierarchy.get(c)?.childIds ?? []).length > 0);
+
+  // Header (root) stays put.
+  out[rootId] = { x: rootNode.position.x, y: startY };
+  const tableTop = startY + MATRIX_HEADER_HEIGHT + MATRIX_HEADER_GAP;
+
+  if (!hasGrandchildren) {
+    // -- Section grid: root header + a balanced grid of its direct children --
+    const kids = categories;
+    if (!kids.length) return out;
+    const cols = Math.min(8, Math.max(3, Math.ceil(Math.sqrt(kids.length * 1.4))));
+    const cellW = Math.max(MATRIX_MIN_COL_WIDTH, ...kids.map((id) => sizeOf(byId.get(id)!).w)) + MATRIX_CELL_PAD_X;
+    const cellH = Math.max(MATRIX_MIN_ROW_HEIGHT, ...kids.map((id) => sizeOf(byId.get(id)!).h)) + MATRIX_CELL_PAD_Y;
+    const gridWidth = cols * cellW + (cols - 1) * MATRIX_CELL_GAP_X;
+    const startX = rootCenter.x - gridWidth / 2;
+    out[rootId] = { x: startX, y: startY, width: Math.max(gridWidth, rootSize.w), height: MATRIX_HEADER_HEIGHT };
+    kids.forEach((id, i) => {
+      const r = Math.floor(i / cols);
+      const c = i % cols;
+      out[id] = {
+        x: startX + c * (cellW + MATRIX_CELL_GAP_X),
+        y: tableTop + r * (cellH + MATRIX_CELL_GAP_Y),
+        width: cellW,
+        height: cellH,
+      };
+    });
+    return out;
+  }
+
+  // -- Full table: rows = (category, subitem, details...) --
+  interface Row { category: string; subitem: string | null; details: string[] }
+  const flattenDetails = (id: string): string[] => {
+    const out: string[] = [];
+    const walk = (cur: string) => {
+      for (const child of hierarchy.get(cur)?.childIds ?? []) {
+        out.push(child);
+        walk(child);
+      }
+    };
+    walk(id);
+    return out;
+  };
+  const rows: Row[] = [];
+  for (const cat of categories) {
+    const subitems = hierarchy.get(cat)?.childIds ?? [];
+    if (!subitems.length) {
+      rows.push({ category: cat, subitem: null, details: [] });
+    } else {
+      subitems.forEach((sub) => {
+        rows.push({ category: cat, subitem: sub, details: flattenDetails(sub) });
+      });
+    }
+  }
+
+  const maxDetails = Math.max(1, ...rows.map((r) => Math.max(1, r.details.length)));
+  const detailCols = Math.min(4, maxDetails);
+
+  // Column widths from widest node in each role.
+  let categoryW = MATRIX_CATEGORY_COL_WIDTH;
+  let subitemW = MATRIX_MIN_COL_WIDTH;
+  let detailSlotW = MATRIX_MIN_COL_WIDTH;
+  for (const r of rows) {
+    categoryW = Math.max(categoryW, sizeOf(byId.get(r.category)!).w + MATRIX_CELL_PAD_X);
+    if (r.subitem) subitemW = Math.max(subitemW, sizeOf(byId.get(r.subitem)!).w + MATRIX_CELL_PAD_X);
+    for (const d of r.details) detailSlotW = Math.max(detailSlotW, sizeOf(byId.get(d)!).w + MATRIX_CELL_PAD_X);
+  }
+  const detailAreaW = Math.max(
+    MATRIX_DETAIL_MIN_WIDTH,
+    detailCols * detailSlotW + (detailCols - 1) * MATRIX_CELL_GAP_X
+  );
+  const tableWidth = categoryW + subitemW + detailAreaW + MATRIX_CELL_GAP_X * 2;
+  const tableStartX = rootCenter.x - tableWidth / 2;
+  const categoryX = tableStartX;
+  const subitemX = categoryX + categoryW + MATRIX_CELL_GAP_X;
+  const detailX = subitemX + subitemW + MATRIX_CELL_GAP_X;
+
+  out[rootId] = { x: tableStartX, y: startY, width: Math.max(tableWidth, rootSize.w), height: MATRIX_HEADER_HEIGHT };
+
+  // Row heights from tallest node in each row.
+  const categoryCounts = rows.reduce((map, row) => {
+    map.set(row.category, (map.get(row.category) ?? 0) + 1);
+    return map;
+  }, new Map<string, number>());
+  const rowHeight = rows.map((r) => {
+    const ids = [r.subitem, ...r.details, categoryCounts.get(r.category) === 1 ? r.category : null].filter(Boolean) as string[];
+    const maxH = ids.length ? Math.max(...ids.map((id) => sizeOf(byId.get(id)!).h)) : rootSize.h;
+    return Math.max(MATRIX_MIN_ROW_HEIGHT, maxH + MATRIX_CELL_PAD_Y);
+  });
+
+  // Lay rows top-to-bottom; add a section gap when the category changes.
+  let y = tableTop;
+  let prevCat: string | null = null;
+  const catRowSpan = new Map<string, { top: number; bottom: number }>();
+  rows.forEach((r, i) => {
+    if (prevCat !== null && r.category !== prevCat) y += MATRIX_SECTION_GAP_Y;
+    const rh = rowHeight[i];
+    if (r.subitem) out[r.subitem] = { x: subitemX, y, width: subitemW, height: rh };
+    const details = r.details.length ? r.details : [];
+    const slots = Math.max(1, Math.min(detailCols, details.length || 1));
+    const slotW = (detailAreaW - (slots - 1) * MATRIX_CELL_GAP_X) / slots;
+    details.forEach((d, di) => {
+      const col = di % slots;
+      const row = Math.floor(di / slots);
+      const detailRows = Math.ceil(details.length / slots);
+      const detailH = (rh - (detailRows - 1) * MATRIX_CELL_GAP_Y) / detailRows;
+      out[d] = {
+        x: detailX + col * (slotW + MATRIX_CELL_GAP_X),
+        y: y + row * (detailH + MATRIX_CELL_GAP_Y),
+        width: slotW,
+        height: detailH,
+      };
+    });
+    const span = catRowSpan.get(r.category) ?? { top: y, bottom: y + rh };
+    span.top = Math.min(span.top, y);
+    span.bottom = Math.max(span.bottom, y + rh);
+    catRowSpan.set(r.category, span);
+    y += rh + MATRIX_CELL_GAP_Y;
+    prevCat = r.category;
+  });
+
+  // Category labels centered vertically over their row span, in column 0.
+  for (const [cat, span] of catRowSpan) {
+    out[cat] = {
+      x: categoryX,
+      y: span.top,
+      width: categoryW,
+      height: span.bottom - span.top,
+    };
+  }
+
+  return out;
+}
+
+// -- Public: compute positions ------------------------------------------------
 
 export function computeLayout(
   nodes: Node[],
@@ -161,47 +458,46 @@ export function computeLayout(
 
   const byId = new Map(nodes.map((n) => [n.id, n]));
   const hierarchy = buildHierarchy(nodes, edges);
-  const roots = options.rootId && byId.has(options.rootId)
-    ? [options.rootId]
-    : getRoots(hierarchy);
+  const roots = options.rootId && byId.has(options.rootId) ? [options.rootId] : getRoots(hierarchy);
   if (!roots.length) return {};
 
   const result: Positions = {};
 
   for (const root of roots) {
     const subtree = getSubtree(root, hierarchy);
-    if (subtree.length === 1 && mode !== "matrix" && mode !== "linear" && mode !== "list") {
-      continue; // nothing to arrange for a lone node in tree/radial modes
-    }
+    const lone = subtree.length === 1;
     const rootNode = byId.get(root)!;
     const rootCenter = centerOf(rootNode);
-    const { w: rw, h: rh } = sizeOf(rootNode);
 
     if (mode === "horizontal" || mode === "vertical" || mode === "topDown") {
-      const centers = tidyTree(root, hierarchy, byId, {
-        axis: mode === "horizontal" ? "h" : "v",
-        levelGap: mode === "horizontal" ? LEVEL_GAP_X : LEVEL_GAP_Y,
-        strictRows: mode === "topDown",
-      });
-      Object.assign(result, centersToPositions(centers, root, byId));
+      if (lone) continue;
+      const centers = tidyTree(root, hierarchy, byId, mode === "horizontal" ? "h" : "v");
+      const pos = centersToPositions(centers, root, byId);
+      // Safety: resolve residual overlaps along the cross axis (keep root fixed).
+      resolveCollisions(pos, byId, mode === "horizontal" ? "y" : "x");
+      Object.assign(result, pos);
     } else if (mode === "radial" || mode === "fromParentFreeForm") {
-      const centers = radialTree(root, hierarchy);
-      Object.assign(result, centersToPositions(centers, root, byId));
+      if (lone) continue;
+      const centers = radialTree(root, hierarchy, byId);
+      const pos = centersToPositions(centers, root, byId);
+      resolveCollisions(pos, byId, "y");
+      Object.assign(result, pos);
     } else if (mode === "list") {
-      let row = 0;
+      let y = rootNode.position.y;
+      let prevDepth1: string | null = null;
       const seen = new Set<string>();
       const walk = (id: string, depth: number) => {
         if (seen.has(id)) return;
         seen.add(id);
         const { h } = sizeOf(byId.get(id)!);
-        result[id] = {
-          x: rootNode.position.x + depth * LIST_INDENT,
-          y: rootNode.position.y + row * (h + LIST_ROW),
-        };
-        row++;
+        if (depth === 1 && prevDepth1 !== null) y += LIST_SECTION_GAP;
+        result[id] = { x: rootNode.position.x + depth * LIST_DEPTH_INDENT, y };
+        y += h + LIST_ROW_GAP;
+        if (depth === 1) prevDepth1 = id;
         for (const c of hierarchy.get(id)?.childIds ?? []) walk(c, depth + 1);
       };
       walk(root, 0);
+      resolveCollisions(result, byId, "y", MIN_NODE_PADDING_X, LIST_ROW_GAP);
     } else if (mode === "linear") {
       const order = getSubtree(root, hierarchy);
       let x = rootNode.position.x;
@@ -210,26 +506,18 @@ export function computeLayout(
         result[id] = { x, y: rootCenter.y - h / 2 };
         x += w + LINEAR_GAP;
       }
+      resolveCollisions(result, byId, "x");
     } else if (mode === "matrix") {
-      const order = getSubtree(root, hierarchy);
-      const maxW = Math.max(...order.map((id) => sizeOf(byId.get(id)!).w), rw);
-      const maxH = Math.max(...order.map((id) => sizeOf(byId.get(id)!).h), rh);
-      const cols = Math.max(1, Math.ceil(Math.sqrt(order.length)));
-      order.forEach((id, i) => {
-        const r = Math.floor(i / cols);
-        const c = i % cols;
-        result[id] = {
-          x: rootNode.position.x + c * (maxW + MATRIX_GAP_X),
-          y: rootNode.position.y + r * (maxH + MATRIX_GAP_Y),
-        };
-      });
+      const pos = matrixLayout(root, hierarchy, byId);
+      resolveCollisions(pos, byId, "y", MATRIX_CELL_PAD_X, MATRIX_CELL_PAD_Y);
+      Object.assign(result, pos);
     }
   }
 
   return result;
 }
 
-// ── Layout-aware edge routing ─────────────────────────────────────────────────
+// -- Layout-aware edge routing metadata ---------------------------------------
 
 export interface EdgeRoute {
   sourceHandle: Side;
@@ -241,27 +529,16 @@ function opposite(side: Side): Side {
   return side === "top" ? "bottom" : side === "bottom" ? "top" : side === "left" ? "right" : "left";
 }
 
-/** Nearest-side routing based on the vector between two node centers. */
 function nearestSides(a: Node, b: Node): { source: Side; target: Side } {
   const ca = centerOf(a);
   const cb = centerOf(b);
   const dx = cb.x - ca.x;
   const dy = cb.y - ca.y;
-  let source: Side;
-  if (Math.abs(dx) >= Math.abs(dy)) source = dx >= 0 ? "right" : "left";
-  else source = dy >= 0 ? "bottom" : "top";
+  const source: Side = Math.abs(dx) >= Math.abs(dy) ? (dx >= 0 ? "right" : "left") : (dy >= 0 ? "bottom" : "top");
   return { source, target: opposite(source) };
 }
 
-/**
- * Compute source/target handle sides + curve style for a parent→child edge
- * under the given layout mode. Uses geometry for dynamic modes.
- */
-export function routeForMode(
-  mode: LayoutMode,
-  parent: Node,
-  child: Node
-): EdgeRoute {
+export function routeForMode(mode: LayoutMode, parent: Node, child: Node): EdgeRoute {
   switch (mode) {
     case "horizontal":
       return { sourceHandle: "right", targetHandle: "left", curveStyle: "step" };
@@ -270,16 +547,16 @@ export function routeForMode(
       return { sourceHandle: "bottom", targetHandle: "top", curveStyle: "step" };
     case "list":
       return { sourceHandle: "bottom", targetHandle: "left", curveStyle: "step" };
+    case "matrix": {
+      const { source, target } = nearestSides(parent, child);
+      return { sourceHandle: source, targetHandle: target, curveStyle: "step" };
+    }
     case "linear": {
       const { source, target } = nearestSides(parent, child);
       return { sourceHandle: source, targetHandle: target, curveStyle: "step" };
     }
     case "radial":
-    case "fromParentFreeForm": {
-      const { source, target } = nearestSides(parent, child);
-      return { sourceHandle: source, targetHandle: target, curveStyle: "smooth" };
-    }
-    case "matrix":
+    case "fromParentFreeForm":
     case "freeForm":
     default: {
       const { source, target } = nearestSides(parent, child);
@@ -288,10 +565,6 @@ export function routeForMode(
   }
 }
 
-/**
- * Assign nearest-side handles to any edges that don't have them yet (used when
- * loading old boards so multi-handle nodes render cleanly).
- */
 export function assignDefaultHandles(nodes: Node[], edges: Edge[]): Edge[] {
   const byId = new Map(nodes.map((n) => [n.id, n]));
   let changed = false;
@@ -307,13 +580,9 @@ export function assignDefaultHandles(nodes: Node[], edges: Edge[]): Edge[] {
   return changed ? next : edges;
 }
 
-// ── Panel metadata ────────────────────────────────────────────────────────────
+// -- Panel metadata ------------------------------------------------------------
 
-export interface LayoutOption {
-  mode: LayoutMode;
-  label: string;
-  description: string;
-}
+export interface LayoutOption { mode: LayoutMode; label: string; description: string }
 
 export const LAYOUT_OPTIONS: LayoutOption[] = [
   { mode: "fromParentFreeForm", label: "From Parent (Free Form)", description: "Radial spread from the selected node" },
@@ -324,5 +593,5 @@ export const LAYOUT_OPTIONS: LayoutOption[] = [
   { mode: "topDown",    label: "Top Down",   description: "Hierarchy from the top" },
   { mode: "linear",     label: "Linear",     description: "Single connected line" },
   { mode: "radial",     label: "Radial",     description: "Concentric rings by depth" },
-  { mode: "matrix",     label: "Matrix",     description: "Even grid of the branch" },
+  { mode: "matrix",     label: "Matrix",     description: "Structured chart / table" },
 ];

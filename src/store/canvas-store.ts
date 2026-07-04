@@ -7,7 +7,13 @@ import type { BoardSettings, SaveStatus, VidyaBoard } from "@/lib/types";
 import { DEFAULT_BOARD_SETTINGS } from "@/lib/types";
 import { HISTORY_LIMIT } from "@/lib/config";
 import { generateId } from "@/lib/utils";
-import { computeLayout, routeForMode, assignDefaultHandles } from "@/lib/layout";
+import {
+  computeLayout,
+  routeForMode,
+  assignDefaultHandles,
+  resolveInsertedNodeCollisions,
+  type LayoutPlacement,
+} from "@/lib/layout";
 import { buildHierarchy, getSubtree } from "@/lib/layout/hierarchy";
 import type { LayoutMode } from "@/lib/types";
 
@@ -56,6 +62,36 @@ interface CanvasState {
 
 function cloneState(nodes: Node[], edges: Edge[]): HistoryEntry {
   return { nodes: structuredClone(nodes), edges: structuredClone(edges) };
+}
+
+function applyPlacements(nodes: Node[], placements: Record<string, LayoutPlacement>): Node[] {
+  return nodes.map((n) => {
+    const placement = placements[n.id];
+    if (!placement) return n;
+    const nextStyle = placement.width || placement.height
+      ? { ...(n.style ?? {}), width: placement.width, height: placement.height }
+      : n.style;
+    return {
+      ...n,
+      position: { x: placement.x, y: placement.y },
+      style: nextStyle,
+    };
+  });
+}
+
+function findLayoutRoot(nodeId: string, nodes: Node[], hierarchy: ReturnType<typeof buildHierarchy>): { id: string; mode?: LayoutMode } {
+  let cur: string | null = nodeId;
+  let fallback = nodeId;
+  const seen = new Set<string>();
+  while (cur && !seen.has(cur)) {
+    seen.add(cur);
+    fallback = cur;
+    const node = nodes.find((n) => n.id === cur);
+    const mode = (node?.data as { layoutMode?: LayoutMode } | undefined)?.layoutMode;
+    if (mode) return { id: cur, mode };
+    cur = hierarchy.get(cur)?.parentId ?? null;
+  }
+  return { id: fallback };
 }
 
 /**
@@ -296,16 +332,24 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     };
     // Record child in the parent's sibling order.
     const prevOrder = (parentData.childOrder as string[]) ?? [];
+    const nextNodes = [
+      ...nodes.map((n) =>
+        n.id === parentId
+          ? { ...n, data: { ...n.data, childOrder: [...prevOrder, childId] } }
+          : n
+      ),
+      newNode,
+    ];
+    const nextEdges = [...edges, newEdge];
+    const nextHierarchy = buildHierarchy(nextNodes, nextEdges);
+    const layoutRoot = findLayoutRoot(parentId, nextNodes, nextHierarchy);
+    const placements = layoutRoot.mode
+      ? computeLayout(nextNodes, nextEdges, layoutRoot.mode, { rootId: layoutRoot.id })
+      : resolveInsertedNodeCollisions(nextNodes, childId);
+
     set({
-      nodes: [
-        ...nodes.map((n) =>
-          n.id === parentId
-            ? { ...n, data: { ...n.data, childOrder: [...prevOrder, childId] } }
-            : n
-        ),
-        newNode,
-      ],
-      edges: [...edges, newEdge],
+      nodes: applyPlacements(nextNodes, placements),
+      edges: nextEdges,
       selectedNodeIds: [childId],
       saveStatus: "unsaved",
     });
@@ -349,8 +393,15 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         data: { edgeType: "branch", curveStyle: route.curveStyle },
       });
     }
+    const nextNodes = [...nodes, newNode];
+    const nextHierarchy = buildHierarchy(nextNodes, newEdges);
+    const layoutRoot = findLayoutRoot(parentEdge?.source ?? nodeId, nextNodes, nextHierarchy);
+    const placements = layoutRoot.mode
+      ? computeLayout(nextNodes, newEdges, layoutRoot.mode, { rootId: layoutRoot.id })
+      : resolveInsertedNodeCollisions(nextNodes, siblingId);
+
     set({
-      nodes: [...nodes, newNode],
+      nodes: applyPlacements(nextNodes, placements),
       edges: newEdges,
       selectedNodeIds: [siblingId],
       saveStatus: "unsaved",
@@ -439,7 +490,10 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         data = { ...data, parentId: h?.parentId ?? null, childOrder: h?.childIds ?? [] };
         if (n.id === rootId) data.layoutMode = mode;
       }
-      return { ...n, ...(pos ? { position: pos } : {}), data };
+      const style = pos?.width || pos?.height
+        ? { ...(n.style ?? {}), width: pos.width, height: pos.height }
+        : n.style;
+      return { ...n, ...(pos ? { position: { x: pos.x, y: pos.y } } : {}), style, data };
     });
 
     set({ nodes: newNodes, edges: newEdges, saveStatus: "unsaved" });
