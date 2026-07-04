@@ -10,7 +10,8 @@ export interface LayoutOptions {
 }
 
 type Pos = { x: number; y: number };
-type Positions = Record<string, Pos>;
+export type LayoutPlacement = Pos & { width?: number; height?: number };
+type Positions = Record<string, LayoutPlacement>;
 type Side = "top" | "right" | "bottom" | "left";
 
 // -- Spacing constants (generous by design - clarity over compactness) --------
@@ -26,11 +27,16 @@ const LINEAR_GAP = 120;
 
 // Matrix constants
 const MATRIX_MIN_COL_WIDTH = 180;
+const MATRIX_CATEGORY_COL_WIDTH = 260;
+const MATRIX_DETAIL_MIN_WIDTH = 520;
 const MATRIX_MIN_ROW_HEIGHT = 72;
 const MATRIX_HEADER_GAP = 56;
 const MATRIX_CELL_PAD_X = 28;
 const MATRIX_CELL_PAD_Y = 20;
+const MATRIX_CELL_GAP_X = 8;
+const MATRIX_CELL_GAP_Y = 8;
 const MATRIX_SECTION_GAP_Y = 36;
+const MATRIX_HEADER_HEIGHT = 64;
 
 const DEFAULT_W = 180;
 const DEFAULT_H = 80;
@@ -120,6 +126,52 @@ function resolveCollisions(
     }
     if (!moved) break;
   }
+}
+
+export function resolveInsertedNodeCollisions(
+  nodes: Node[],
+  insertedId: string,
+  padX = MIN_NODE_PADDING_X,
+  padY = MIN_NODE_PADDING_Y
+): Positions {
+  const inserted = nodes.find((n) => n.id === insertedId);
+  if (!inserted) return {};
+
+  const byId = new Map(nodes.map((n) => [n.id, n]));
+  const positions: Positions = {};
+  for (const n of nodes) positions[n.id] = { ...n.position };
+
+  const rect = (id: string): NodeRect => {
+    const n = byId.get(id)!;
+    const { w, h } = sizeOf(n);
+    return { id, x: positions[id].x, y: positions[id].y, width: w, height: h };
+  };
+
+  for (let iteration = 0; iteration < 10; iteration++) {
+    let moved = false;
+    const anchor = rect(insertedId);
+    for (const node of nodes) {
+      if (node.id === insertedId) continue;
+      const other = rect(node.id);
+      if (!rectsTooClose(anchor, other, padX, padY)) continue;
+      const pushBelow = other.y + other.height / 2 >= anchor.y + anchor.height / 2;
+      if (pushBelow) {
+        positions[node.id].y = Math.max(positions[node.id].y, anchor.y + anchor.height + padY);
+      } else {
+        positions[node.id].y = Math.min(positions[node.id].y, anchor.y - other.height - padY);
+      }
+      moved = true;
+    }
+    resolveCollisions(positions, byId, "y", padX, padY, 3);
+    if (!moved) break;
+  }
+
+  const changed: Positions = {};
+  for (const n of nodes) {
+    const p = positions[n.id];
+    if (p.x !== n.position.x || p.y !== n.position.y) changed[n.id] = p;
+  }
+  return changed;
 }
 
 // -- Tidy tree with adaptive, content-aware level spacing ---------------------
@@ -264,7 +316,7 @@ function matrixLayout(rootId: string, hierarchy: Hierarchy, byId: Map<string, No
 
   // Header (root) stays put.
   out[rootId] = { x: rootNode.position.x, y: startY };
-  const tableTop = startY + rootSize.h + MATRIX_HEADER_GAP;
+  const tableTop = startY + MATRIX_HEADER_HEIGHT + MATRIX_HEADER_GAP;
 
   if (!hasGrandchildren) {
     // -- Section grid: root header + a balanced grid of its direct children --
@@ -273,15 +325,17 @@ function matrixLayout(rootId: string, hierarchy: Hierarchy, byId: Map<string, No
     const cols = Math.min(8, Math.max(3, Math.ceil(Math.sqrt(kids.length * 1.4))));
     const cellW = Math.max(MATRIX_MIN_COL_WIDTH, ...kids.map((id) => sizeOf(byId.get(id)!).w)) + MATRIX_CELL_PAD_X;
     const cellH = Math.max(MATRIX_MIN_ROW_HEIGHT, ...kids.map((id) => sizeOf(byId.get(id)!).h)) + MATRIX_CELL_PAD_Y;
-    const gridWidth = cols * cellW;
+    const gridWidth = cols * cellW + (cols - 1) * MATRIX_CELL_GAP_X;
     const startX = rootCenter.x - gridWidth / 2;
+    out[rootId] = { x: startX, y: startY, width: Math.max(gridWidth, rootSize.w), height: MATRIX_HEADER_HEIGHT };
     kids.forEach((id, i) => {
       const r = Math.floor(i / cols);
       const c = i % cols;
-      const { w, h } = sizeOf(byId.get(id)!);
       out[id] = {
-        x: startX + c * cellW + (cellW - MATRIX_CELL_PAD_X - w) / 2,
-        y: tableTop + r * cellH + (cellH - MATRIX_CELL_PAD_Y - h) / 2,
+        x: startX + c * (cellW + MATRIX_CELL_GAP_X),
+        y: tableTop + r * (cellH + MATRIX_CELL_GAP_Y),
+        width: cellW,
+        height: cellH,
       };
     });
     return out;
@@ -312,25 +366,29 @@ function matrixLayout(rootId: string, hierarchy: Hierarchy, byId: Map<string, No
     }
   }
 
-  const maxDetails = Math.max(0, ...rows.map((r) => r.details.length));
-  const colCount = 2 + maxDetails; // col0 category, col1 subitem, then details
+  const maxDetails = Math.max(1, ...rows.map((r) => Math.max(1, r.details.length)));
+  const detailCols = Math.min(4, maxDetails);
 
-  // Column widths from widest node in each column.
-  const colWidth: number[] = new Array(colCount).fill(MATRIX_MIN_COL_WIDTH);
-  const consider = (col: number, id: string | null) => {
-    if (!id) return;
-    colWidth[col] = Math.max(colWidth[col], sizeOf(byId.get(id)!).w + MATRIX_CELL_PAD_X);
-  };
+  // Column widths from widest node in each role.
+  let categoryW = MATRIX_CATEGORY_COL_WIDTH;
+  let subitemW = MATRIX_MIN_COL_WIDTH;
+  let detailSlotW = MATRIX_MIN_COL_WIDTH;
   for (const r of rows) {
-    consider(0, r.category);
-    consider(1, r.subitem);
-    r.details.forEach((d, i) => consider(2 + i, d));
+    categoryW = Math.max(categoryW, sizeOf(byId.get(r.category)!).w + MATRIX_CELL_PAD_X);
+    if (r.subitem) subitemW = Math.max(subitemW, sizeOf(byId.get(r.subitem)!).w + MATRIX_CELL_PAD_X);
+    for (const d of r.details) detailSlotW = Math.max(detailSlotW, sizeOf(byId.get(d)!).w + MATRIX_CELL_PAD_X);
   }
-  const tableWidth = colWidth.reduce((sum, w) => sum + w, 0);
+  const detailAreaW = Math.max(
+    MATRIX_DETAIL_MIN_WIDTH,
+    detailCols * detailSlotW + (detailCols - 1) * MATRIX_CELL_GAP_X
+  );
+  const tableWidth = categoryW + subitemW + detailAreaW + MATRIX_CELL_GAP_X * 2;
   const tableStartX = rootCenter.x - tableWidth / 2;
-  const colX: number[] = [];
-  let ax = tableStartX;
-  for (let c = 0; c < colCount; c++) { colX[c] = ax; ax += colWidth[c]; }
+  const categoryX = tableStartX;
+  const subitemX = categoryX + categoryW + MATRIX_CELL_GAP_X;
+  const detailX = subitemX + subitemW + MATRIX_CELL_GAP_X;
+
+  out[rootId] = { x: tableStartX, y: startY, width: Math.max(tableWidth, rootSize.w), height: MATRIX_HEADER_HEIGHT };
 
   // Row heights from tallest node in each row.
   const categoryCounts = rows.reduce((map, row) => {
@@ -343,14 +401,6 @@ function matrixLayout(rootId: string, hierarchy: Hierarchy, byId: Map<string, No
     return Math.max(MATRIX_MIN_ROW_HEIGHT, maxH + MATRIX_CELL_PAD_Y);
   });
 
-  const place = (id: string, col: number, rowTop: number, rh: number) => {
-    const { w, h } = sizeOf(byId.get(id)!);
-    out[id] = {
-      x: colX[col] + (colWidth[col] - MATRIX_CELL_PAD_X - w) / 2,
-      y: rowTop + (rh - h) / 2,
-    };
-  };
-
   // Lay rows top-to-bottom; add a section gap when the category changes.
   let y = tableTop;
   let prevCat: string | null = null;
@@ -358,22 +408,37 @@ function matrixLayout(rootId: string, hierarchy: Hierarchy, byId: Map<string, No
   rows.forEach((r, i) => {
     if (prevCat !== null && r.category !== prevCat) y += MATRIX_SECTION_GAP_Y;
     const rh = rowHeight[i];
-    if (r.subitem) place(r.subitem, 1, y, rh);
-    r.details.forEach((d, di) => place(d, 2 + di, y, rh));
+    if (r.subitem) out[r.subitem] = { x: subitemX, y, width: subitemW, height: rh };
+    const details = r.details.length ? r.details : [];
+    const slots = Math.max(1, Math.min(detailCols, details.length || 1));
+    const slotW = (detailAreaW - (slots - 1) * MATRIX_CELL_GAP_X) / slots;
+    details.forEach((d, di) => {
+      const col = di % slots;
+      const row = Math.floor(di / slots);
+      const detailRows = Math.ceil(details.length / slots);
+      const detailH = (rh - (detailRows - 1) * MATRIX_CELL_GAP_Y) / detailRows;
+      out[d] = {
+        x: detailX + col * (slotW + MATRIX_CELL_GAP_X),
+        y: y + row * (detailH + MATRIX_CELL_GAP_Y),
+        width: slotW,
+        height: detailH,
+      };
+    });
     const span = catRowSpan.get(r.category) ?? { top: y, bottom: y + rh };
     span.top = Math.min(span.top, y);
     span.bottom = Math.max(span.bottom, y + rh);
     catRowSpan.set(r.category, span);
-    y += rh;
+    y += rh + MATRIX_CELL_GAP_Y;
     prevCat = r.category;
   });
 
   // Category labels centered vertically over their row span, in column 0.
   for (const [cat, span] of catRowSpan) {
-    const { w, h } = sizeOf(byId.get(cat)!);
     out[cat] = {
-      x: colX[0] + (colWidth[0] - MATRIX_CELL_PAD_X - w) / 2,
-      y: (span.top + span.bottom) / 2 - h / 2,
+      x: categoryX,
+      y: span.top,
+      width: categoryW,
+      height: span.bottom - span.top,
     };
   }
 
