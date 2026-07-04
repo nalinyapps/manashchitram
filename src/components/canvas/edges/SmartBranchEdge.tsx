@@ -4,13 +4,12 @@ import { memo } from "react";
 import {
   BaseEdge,
   EdgeLabelRenderer,
-  useEdges,
   useNodes,
   type EdgeProps,
 } from "@xyflow/react";
 import type { VidyaEdgeData } from "@/lib/types";
 import { getNodeRect, type NodeRect } from "@/lib/layout";
-import { routeRectilinearEdge, type Segment } from "@/lib/layout/edge-routing";
+import { routeRectilinearEdge } from "@/lib/layout/edge-routing";
 
 function SmartBranchEdgeComponent({
   id,
@@ -26,7 +25,6 @@ function SmartBranchEdgeComponent({
 }: EdgeProps) {
   const d = (data ?? {}) as VidyaEdgeData;
   const nodes = useNodes();
-  const edges = useEdges();
   if (d.hiddenInMatrix) return null;
 
   let path: string;
@@ -45,24 +43,7 @@ function SmartBranchEdgeComponent({
       obstacles.push(getNodeRect(n));
     }
 
-    const byId = new Map(nodes.map((n) => [n.id, n]));
-    const peerSegments: Segment[] = [];
-    for (const edge of edges) {
-      if (edge.id === id || edge.hidden) continue;
-      const edgeData = (edge.data ?? {}) as VidyaEdgeData;
-      if (edgeData.hiddenInMatrix) continue;
-      const s = byId.get(edge.source);
-      const t = byId.get(edge.target);
-      if (!s || !t) continue;
-      const sr = getNodeRect(s);
-      const tr = getNodeRect(t);
-      peerSegments.push({
-        a: { x: sr.x + sr.width / 2, y: sr.y + sr.height / 2 },
-        b: { x: tr.x + tr.width / 2, y: tr.y + tr.height / 2 },
-      });
-    }
-
-    const routed = routeRectilinearEdge(sourceRect, targetRect, obstacles, peerSegments);
+    const routed = routeRectilinearEdge(sourceRect, targetRect, obstacles);
     path = routed.path;
     labelX = routed.labelX;
     labelY = routed.labelY;

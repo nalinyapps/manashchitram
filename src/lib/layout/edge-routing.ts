@@ -101,7 +101,7 @@ function buildCandidates(s: Pt, t: Pt, ss: Side, ts: Side, obstacles: NodeRect[]
   candidates.push([s, s1, { x: s1.x, y: midY }, { x: t1.x, y: midY }, t1, t]);
 
   // Wider doglegs above/below/left/right, to escape a blocking box
-  const escapes = [80, 160, 260];
+  const escapes = [80, 180];
   for (const e of escapes) {
     candidates.push([s, s1, { x: s1.x, y: Math.min(s1.y, t1.y) - e }, { x: t1.x, y: Math.min(s1.y, t1.y) - e }, t1, t]);
     candidates.push([s, s1, { x: s1.x, y: Math.max(s1.y, t1.y) + e }, { x: t1.x, y: Math.max(s1.y, t1.y) + e }, t1, t]);
@@ -217,13 +217,20 @@ function preferredSides(source: NodeRect, target: NodeRect): Array<{ sourceSide:
   const primary = horizontal
     ? { sourceSide: tc.x >= sc.x ? "right" as Side : "left" as Side, targetSide: tc.x >= sc.x ? "left" as Side : "right" as Side }
     : { sourceSide: tc.y >= sc.y ? "bottom" as Side : "top" as Side, targetSide: tc.y >= sc.y ? "top" as Side : "bottom" as Side };
-  return [
+  const candidates: Array<{ sourceSide: Side; targetSide: Side }> = [
     primary,
     { sourceSide: "right", targetSide: "left" },
     { sourceSide: "left", targetSide: "right" },
     { sourceSide: "bottom", targetSide: "top" },
     { sourceSide: "top", targetSide: "bottom" },
   ];
+  const seen = new Set<string>();
+  return candidates.filter((candidate) => {
+    const key = `${candidate.sourceSide}:${candidate.targetSide}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  }).slice(0, 3);
 }
 
 export function routeRectilinearEdge(
@@ -233,7 +240,7 @@ export function routeRectilinearEdge(
   peerSegments: Segment[] = []
 ): RouteResult {
   const inflated = obstacles.map((o) => inflate(o, EDGE_OBSTACLE_PADDING));
-  const fractions = [0.2, 0.35, 0.5, 0.65, 0.8];
+  const fractions = [0.25, 0.5, 0.75];
   let best: Pt[] | null = null;
   let bestScore = Infinity;
 
