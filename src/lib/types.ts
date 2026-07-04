@@ -205,6 +205,7 @@ export interface VidyaEdgeData extends Record<string, unknown> {
   color?: string;
   width?: number;
   dashed?: boolean;
+  hiddenInMatrix?: boolean;
   arrowStart?: boolean;
   arrowEnd?: boolean;
   curveStyle?: EdgeCurveStyle;

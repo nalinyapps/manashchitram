@@ -366,23 +366,16 @@ function matrixLayout(rootId: string, hierarchy: Hierarchy, byId: Map<string, No
     }
   }
 
-  const maxDetails = Math.max(1, ...rows.map((r) => Math.max(1, r.details.length)));
-  const detailCols = Math.min(4, maxDetails);
-
   // Column widths from widest node in each role.
   let categoryW = MATRIX_CATEGORY_COL_WIDTH;
   let subitemW = MATRIX_MIN_COL_WIDTH;
-  let detailSlotW = MATRIX_MIN_COL_WIDTH;
+  let detailW = MATRIX_DETAIL_MIN_WIDTH;
   for (const r of rows) {
     categoryW = Math.max(categoryW, sizeOf(byId.get(r.category)!).w + MATRIX_CELL_PAD_X);
     if (r.subitem) subitemW = Math.max(subitemW, sizeOf(byId.get(r.subitem)!).w + MATRIX_CELL_PAD_X);
-    for (const d of r.details) detailSlotW = Math.max(detailSlotW, sizeOf(byId.get(d)!).w + MATRIX_CELL_PAD_X);
+    for (const d of r.details) detailW = Math.max(detailW, sizeOf(byId.get(d)!).w + MATRIX_CELL_PAD_X);
   }
-  const detailAreaW = Math.max(
-    MATRIX_DETAIL_MIN_WIDTH,
-    detailCols * detailSlotW + (detailCols - 1) * MATRIX_CELL_GAP_X
-  );
-  const tableWidth = categoryW + subitemW + detailAreaW + MATRIX_CELL_GAP_X * 2;
+  const tableWidth = categoryW + subitemW + detailW + MATRIX_CELL_GAP_X * 2;
   const tableStartX = rootCenter.x - tableWidth / 2;
   const categoryX = tableStartX;
   const subitemX = categoryX + categoryW + MATRIX_CELL_GAP_X;
@@ -396,9 +389,14 @@ function matrixLayout(rootId: string, hierarchy: Hierarchy, byId: Map<string, No
     return map;
   }, new Map<string, number>());
   const rowHeight = rows.map((r) => {
-    const ids = [r.subitem, ...r.details, categoryCounts.get(r.category) === 1 ? r.category : null].filter(Boolean) as string[];
-    const maxH = ids.length ? Math.max(...ids.map((id) => sizeOf(byId.get(id)!).h)) : rootSize.h;
-    return Math.max(MATRIX_MIN_ROW_HEIGHT, maxH + MATRIX_CELL_PAD_Y);
+    const detailStackH = r.details.length
+      ? r.details.reduce((sum, id) => sum + sizeOf(byId.get(id)!).h, 0) +
+        Math.max(0, r.details.length - 1) * MATRIX_CELL_GAP_Y +
+        MATRIX_CELL_PAD_Y
+      : 0;
+    const subitemH = r.subitem ? sizeOf(byId.get(r.subitem)!).h + MATRIX_CELL_PAD_Y : 0;
+    const categoryH = categoryCounts.get(r.category) === 1 ? sizeOf(byId.get(r.category)!).h + MATRIX_CELL_PAD_Y : 0;
+    return Math.max(MATRIX_MIN_ROW_HEIGHT, detailStackH, subitemH, categoryH);
   });
 
   // Lay rows top-to-bottom; add a section gap when the category changes.
@@ -409,20 +407,17 @@ function matrixLayout(rootId: string, hierarchy: Hierarchy, byId: Map<string, No
     if (prevCat !== null && r.category !== prevCat) y += MATRIX_SECTION_GAP_Y;
     const rh = rowHeight[i];
     if (r.subitem) out[r.subitem] = { x: subitemX, y, width: subitemW, height: rh };
-    const details = r.details.length ? r.details : [];
-    const slots = Math.max(1, Math.min(detailCols, details.length || 1));
-    const slotW = (detailAreaW - (slots - 1) * MATRIX_CELL_GAP_X) / slots;
-    details.forEach((d, di) => {
-      const col = di % slots;
-      const row = Math.floor(di / slots);
-      const detailRows = Math.ceil(details.length / slots);
-      const detailH = (rh - (detailRows - 1) * MATRIX_CELL_GAP_Y) / detailRows;
+    let detailY = y;
+    r.details.forEach((d) => {
+      const naturalH = sizeOf(byId.get(d)!).h + MATRIX_CELL_PAD_Y;
+      const detailH = r.details.length === 1 ? rh : naturalH;
       out[d] = {
-        x: detailX + col * (slotW + MATRIX_CELL_GAP_X),
-        y: y + row * (detailH + MATRIX_CELL_GAP_Y),
-        width: slotW,
+        x: detailX,
+        y: detailY,
+        width: detailW,
         height: detailH,
       };
+      detailY += detailH + MATRIX_CELL_GAP_Y;
     });
     const span = catRowSpan.get(r.category) ?? { top: y, bottom: y + rh };
     span.top = Math.min(span.top, y);

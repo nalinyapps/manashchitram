@@ -217,6 +217,7 @@ function VidyaCanvasInner({ boardId }: { boardId: string }) {
       const targetNode = cs.nodes.find((n) => n.id === connection.target);
       const mode = ((source?.data as { layoutMode?: LayoutMode } | undefined)?.layoutMode ?? "freeForm") as LayoutMode;
       const route = source && targetNode ? routeForMode(mode, source, targetNode) : null;
+      const hiddenInMatrix = mode === "matrix";
       const newEdge: Edge = {
         id: generateId(),
         source: connection.source,
@@ -224,9 +225,10 @@ function VidyaCanvasInner({ boardId }: { boardId: string }) {
         sourceHandle: connection.sourceHandle ?? route?.sourceHandle ?? undefined,
         targetHandle: connection.targetHandle ?? route?.targetHandle ?? undefined,
         type: "branch",
+        hidden: hiddenInMatrix,
         reconnectable: true,
         markerEnd: { type: MarkerType.ArrowClosed, color: "#6366f1" },
-        data: { edgeType: "branch", curveStyle: route?.curveStyle ?? "smooth" },
+        data: { edgeType: "branch", curveStyle: route?.curveStyle ?? "smooth", hiddenInMatrix },
       };
       // Record parent→child relationship if the target has no parent yet.
       const hasParent = targetNode && (targetNode.data as { parentId?: string | null }).parentId;
@@ -247,6 +249,7 @@ function VidyaCanvasInner({ boardId }: { boardId: string }) {
     cs.pushHistory();
     const mode = ((source.data as { layoutMode?: LayoutMode } | undefined)?.layoutMode ?? "freeForm") as LayoutMode;
     const route = routeForMode(mode, source, target);
+    const hiddenInMatrix = mode === "matrix";
 
     const nextEdges = cs.edges.map((edge) => {
       if (edge.id !== oldEdge.id) return edge;
@@ -256,9 +259,10 @@ function VidyaCanvasInner({ boardId }: { boardId: string }) {
         target: connection.target,
         sourceHandle: connection.sourceHandle ?? route.sourceHandle,
         targetHandle: connection.targetHandle ?? route.targetHandle,
+        hidden: hiddenInMatrix,
         reconnectable: true,
         markerEnd: edge.markerEnd ?? { type: MarkerType.ArrowClosed, color: "#6366f1" },
-        data: { ...(edge.data ?? {}), edgeType: "branch", curveStyle: route.curveStyle },
+        data: { ...(edge.data ?? {}), edgeType: "branch", curveStyle: route.curveStyle, hiddenInMatrix },
       };
     });
 
@@ -420,8 +424,10 @@ function VidyaCanvasInner({ boardId }: { boardId: string }) {
       connectionMode={ConnectionMode.Loose}
       edgesReconnectable
       reconnectRadius={14}
+      minZoom={0.05}
+      maxZoom={4}
       fitView
-      fitViewOptions={{ padding: 0.2, maxZoom: 1.5 }}
+      fitViewOptions={{ padding: 0.2, maxZoom: 2 }}
       snapToGrid={settings.snapToGrid}
       snapGrid={[settings.gridSize ?? 20, settings.gridSize ?? 20]}
       panOnDrag={activeTool === "pan" || spacePressed ? [0, 1, 2] : [1, 2]}

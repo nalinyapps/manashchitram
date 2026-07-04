@@ -2,6 +2,7 @@
 
 import { Fragment } from "react";
 import { Handle, Position } from "@xyflow/react";
+import { useUIStore } from "@/store/ui-store";
 
 /**
  * Renders a source AND a target handle on each of the four sides, with ids
@@ -17,22 +18,53 @@ const SIDES: Array<{ id: "top" | "right" | "bottom" | "left"; pos: Position }> =
 ];
 
 export function NodeHandles({ color = "#6366f1" }: { color?: string }) {
+  const activeTool = useUIStore((s) => s.activeTool);
+  const fullSurfaceActive = activeTool === "connector";
+
   return (
     <>
+      <Handle
+        type="target"
+        id="auto"
+        position={Position.Top}
+        className="!border-0 !bg-transparent !opacity-0"
+        style={{
+          width: "100%",
+          height: "100%",
+          left: 0,
+          top: 0,
+          transform: "none",
+          pointerEvents: fullSurfaceActive ? "all" : "none",
+        }}
+      />
+      <Handle
+        type="source"
+        id="auto"
+        position={Position.Top}
+        className="!border-0 !bg-transparent !opacity-0"
+        style={{
+          width: "100%",
+          height: "100%",
+          left: 0,
+          top: 0,
+          transform: "none",
+          pointerEvents: fullSurfaceActive ? "all" : "none",
+        }}
+      />
       {SIDES.map(({ id, pos }) => (
         <Fragment key={id}>
           <Handle
             type="target"
             id={id}
             position={pos}
-            className="!h-2 !w-2 !border !border-background !opacity-0 group-hover:!opacity-100 transition-opacity"
+            className="!h-2 !w-2 !border !border-background !opacity-0"
             style={{ background: color }}
           />
           <Handle
             type="source"
             id={id}
             position={pos}
-            className="!h-2 !w-2 !border !border-background !opacity-0 group-hover:!opacity-100 transition-opacity"
+            className="!h-2 !w-2 !border !border-background !opacity-0"
             style={{ background: color }}
           />
         </Fragment>

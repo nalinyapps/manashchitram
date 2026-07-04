@@ -2,6 +2,7 @@ import type { NodeRect } from "./index";
 
 export type Side = "top" | "right" | "bottom" | "left";
 type Pt = { x: number; y: number };
+export type Segment = { a: Pt; b: Pt };
 
 export const EDGE_OBSTACLE_PADDING = 24;
 
@@ -26,6 +27,39 @@ function pathIntersections(points: Pt[], obstacles: NodeRect[]): number {
   for (let i = 0; i < points.length - 1; i++) {
     for (const o of obstacles) {
       if (segIntersectsRect(points[i], points[i + 1], o)) count++;
+    }
+  }
+  return count;
+}
+
+function orientation(a: Pt, b: Pt, c: Pt): number {
+  return Math.sign((b.y - a.y) * (c.x - b.x) - (b.x - a.x) * (c.y - b.y));
+}
+
+function segmentsCross(a1: Pt, a2: Pt, b1: Pt, b2: Pt): boolean {
+  const aMinX = Math.min(a1.x, a2.x);
+  const aMaxX = Math.max(a1.x, a2.x);
+  const aMinY = Math.min(a1.y, a2.y);
+  const aMaxY = Math.max(a1.y, a2.y);
+  const bMinX = Math.min(b1.x, b2.x);
+  const bMaxX = Math.max(b1.x, b2.x);
+  const bMinY = Math.min(b1.y, b2.y);
+  const bMaxY = Math.max(b1.y, b2.y);
+  if (aMaxX < bMinX || bMaxX < aMinX || aMaxY < bMinY || bMaxY < aMinY) return false;
+
+  const o1 = orientation(a1, a2, b1);
+  const o2 = orientation(a1, a2, b2);
+  const o3 = orientation(b1, b2, a1);
+  const o4 = orientation(b1, b2, a2);
+  if (o1 === 0 && o2 === 0 && o3 === 0 && o4 === 0) return true;
+  return o1 !== o2 && o3 !== o4;
+}
+
+function edgeCrossings(points: Pt[], peerSegments: Segment[]): number {
+  let count = 0;
+  for (let i = 0; i < points.length - 1; i++) {
+    for (const segment of peerSegments) {
+      if (segmentsCross(points[i], points[i + 1], segment.a, segment.b)) count++;
     }
   }
   return count;
@@ -146,7 +180,8 @@ export function routeOrthogonalEdge(
   target: Pt,
   sourceSide: Side,
   targetSide: Side,
-  obstacles: NodeRect[]
+  obstacles: NodeRect[],
+  peerSegments: Segment[] = []
 ): RouteResult {
   const inflated = obstacles.map((o) => inflate(o, EDGE_OBSTACLE_PADDING));
   const candidates = buildCandidates(source, target, sourceSide, targetSide, inflated);
@@ -156,6 +191,7 @@ export function routeOrthogonalEdge(
   for (const c of candidates) {
     const score =
       pathIntersections(c, inflated) * 100000 +
+      edgeCrossings(c, peerSegments) * 2500 +
       pathLength(c) +
       (c.length - 2) * 40; // bend penalty
     if (score < bestScore) { bestScore = score; best = c; }
@@ -163,4 +199,67 @@ export function routeOrthogonalEdge(
 
   const mid = best[Math.floor(best.length / 2)];
   return { path: toRoundedPath(best), labelX: mid.x, labelY: mid.y };
+}
+
+function sidePoint(rect: NodeRect, side: Side, fraction: number): Pt {
+  switch (side) {
+    case "top": return { x: rect.x + rect.width * fraction, y: rect.y };
+    case "bottom": return { x: rect.x + rect.width * fraction, y: rect.y + rect.height };
+    case "left": return { x: rect.x, y: rect.y + rect.height * fraction };
+    case "right": return { x: rect.x + rect.width, y: rect.y + rect.height * fraction };
+  }
+}
+
+function preferredSides(source: NodeRect, target: NodeRect): Array<{ sourceSide: Side; targetSide: Side }> {
+  const sc = { x: source.x + source.width / 2, y: source.y + source.height / 2 };
+  const tc = { x: target.x + target.width / 2, y: target.y + target.height / 2 };
+  const horizontal = Math.abs(tc.x - sc.x) >= Math.abs(tc.y - sc.y);
+  const primary = horizontal
+    ? { sourceSide: tc.x >= sc.x ? "right" as Side : "left" as Side, targetSide: tc.x >= sc.x ? "left" as Side : "right" as Side }
+    : { sourceSide: tc.y >= sc.y ? "bottom" as Side : "top" as Side, targetSide: tc.y >= sc.y ? "top" as Side : "bottom" as Side };
+  return [
+    primary,
+    { sourceSide: "right", targetSide: "left" },
+    { sourceSide: "left", targetSide: "right" },
+    { sourceSide: "bottom", targetSide: "top" },
+    { sourceSide: "top", targetSide: "bottom" },
+  ];
+}
+
+export function routeRectilinearEdge(
+  sourceRect: NodeRect,
+  targetRect: NodeRect,
+  obstacles: NodeRect[],
+  peerSegments: Segment[] = []
+): RouteResult {
+  const inflated = obstacles.map((o) => inflate(o, EDGE_OBSTACLE_PADDING));
+  const fractions = [0.2, 0.35, 0.5, 0.65, 0.8];
+  let best: Pt[] | null = null;
+  let bestScore = Infinity;
+
+  for (const sides of preferredSides(sourceRect, targetRect)) {
+    for (const sf of fractions) {
+      for (const tf of fractions) {
+        const source = sidePoint(sourceRect, sides.sourceSide, sf);
+        const target = sidePoint(targetRect, sides.targetSide, tf);
+        for (const candidate of buildCandidates(source, target, sides.sourceSide, sides.targetSide, inflated)) {
+          const score =
+            pathIntersections(candidate, inflated) * 100000 +
+            edgeCrossings(candidate, peerSegments) * 2500 +
+            pathLength(candidate) +
+            Math.abs(sf - 0.5) * 80 +
+            Math.abs(tf - 0.5) * 80 +
+            (candidate.length - 2) * 40;
+          if (score < bestScore) {
+            bestScore = score;
+            best = candidate;
+          }
+        }
+      }
+    }
+  }
+
+  const points = best ?? [sidePoint(sourceRect, "right", 0.5), sidePoint(targetRect, "left", 0.5)];
+  const mid = points[Math.floor(points.length / 2)];
+  return { path: toRoundedPath(points), labelX: mid.x, labelY: mid.y };
 }

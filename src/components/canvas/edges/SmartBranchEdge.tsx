@@ -4,24 +4,13 @@ import { memo } from "react";
 import {
   BaseEdge,
   EdgeLabelRenderer,
-  getBezierPath,
+  useEdges,
   useNodes,
-  Position,
   type EdgeProps,
 } from "@xyflow/react";
 import type { VidyaEdgeData } from "@/lib/types";
 import { getNodeRect, type NodeRect } from "@/lib/layout";
-import { routeOrthogonalEdge, type Side } from "@/lib/layout/edge-routing";
-
-function toSide(p: Position): Side {
-  switch (p) {
-    case Position.Top: return "top";
-    case Position.Right: return "right";
-    case Position.Bottom: return "bottom";
-    case Position.Left: return "left";
-    default: return "right";
-  }
-}
+import { routeRectilinearEdge, type Segment } from "@/lib/layout/edge-routing";
 
 function SmartBranchEdgeComponent({
   id,
@@ -31,42 +20,56 @@ function SmartBranchEdgeComponent({
   sourceY,
   targetX,
   targetY,
-  sourcePosition,
-  targetPosition,
   data,
   selected,
   markerEnd,
 }: EdgeProps) {
   const d = (data ?? {}) as VidyaEdgeData;
-  const curveStyle = d.curveStyle ?? "smooth";
   const nodes = useNodes();
+  const edges = useEdges();
+  if (d.hiddenInMatrix) return null;
 
   let path: string;
   let labelX: number;
   let labelY: number;
 
-  if (curveStyle === "smooth") {
-    // Curved routing for radial / free-form - clean bezier, no obstacle solve.
-    [path, labelX, labelY] = getBezierPath({
-      sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition,
-    });
-  } else {
-    // Structured layouts -> orthogonal routing that avoids other node boxes.
+  const sourceNode = nodes.find((n) => n.id === source);
+  const targetNode = nodes.find((n) => n.id === target);
+
+  if (sourceNode && targetNode) {
+    const sourceRect = getNodeRect(sourceNode);
+    const targetRect = getNodeRect(targetNode);
     const obstacles: NodeRect[] = [];
     for (const n of nodes) {
       if (n.id === source || n.id === target) continue;
       obstacles.push(getNodeRect(n));
     }
-    const routed = routeOrthogonalEdge(
-      { x: sourceX, y: sourceY },
-      { x: targetX, y: targetY },
-      toSide(sourcePosition),
-      toSide(targetPosition),
-      obstacles
-    );
+
+    const byId = new Map(nodes.map((n) => [n.id, n]));
+    const peerSegments: Segment[] = [];
+    for (const edge of edges) {
+      if (edge.id === id || edge.hidden) continue;
+      const edgeData = (edge.data ?? {}) as VidyaEdgeData;
+      if (edgeData.hiddenInMatrix) continue;
+      const s = byId.get(edge.source);
+      const t = byId.get(edge.target);
+      if (!s || !t) continue;
+      const sr = getNodeRect(s);
+      const tr = getNodeRect(t);
+      peerSegments.push({
+        a: { x: sr.x + sr.width / 2, y: sr.y + sr.height / 2 },
+        b: { x: tr.x + tr.width / 2, y: tr.y + tr.height / 2 },
+      });
+    }
+
+    const routed = routeRectilinearEdge(sourceRect, targetRect, obstacles, peerSegments);
     path = routed.path;
     labelX = routed.labelX;
     labelY = routed.labelY;
+  } else {
+    path = `M ${sourceX} ${sourceY} L ${targetX} ${targetY}`;
+    labelX = (sourceX + targetX) / 2;
+    labelY = (sourceY + targetY) / 2;
   }
 
   return (

@@ -320,15 +320,17 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       style: parent.style ? { ...parent.style, height: undefined } : undefined,
     };
     const route = routeForMode(mode, parent, newNode);
+    const hiddenInMatrix = mode === "matrix";
     const newEdge: Edge = {
       id: generateId(),
       source: parentId,
       target: childId,
       type: "branch",
+      hidden: hiddenInMatrix,
       sourceHandle: route.sourceHandle,
       targetHandle: route.targetHandle,
       markerEnd: { type: MarkerType.ArrowClosed, color: "#6366f1" },
-      data: { edgeType: "branch", curveStyle: route.curveStyle },
+      data: { edgeType: "branch", curveStyle: route.curveStyle, hiddenInMatrix },
     };
     // Record child in the parent's sibling order.
     const prevOrder = (parentData.childOrder as string[]) ?? [];
@@ -381,16 +383,19 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     };
     const newEdges = [...edges];
     if (parentEdge && parentNode) {
-      const route = routeForMode(mode ?? "horizontal", parentNode, newNode);
+      const edgeMode = mode ?? "horizontal";
+      const route = routeForMode(edgeMode, parentNode, newNode);
+      const hiddenInMatrix = edgeMode === "matrix";
       newEdges.push({
         id: generateId(),
         source: parentEdge.source,
         target: siblingId,
         type: "branch",
+        hidden: hiddenInMatrix,
         sourceHandle: route.sourceHandle,
         targetHandle: route.targetHandle,
         markerEnd: { type: MarkerType.ArrowClosed, color: "#6366f1" },
-        data: { edgeType: "branch", curveStyle: route.curveStyle },
+        data: { edgeType: "branch", curveStyle: route.curveStyle, hiddenInMatrix },
       });
     }
     const nextNodes = [...nodes, newNode];
@@ -464,19 +469,31 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
     // Reroute parent→child edges within scope, using post-layout geometry.
     const newEdges = edges.map((e) => {
-      if (!scopeIds.has(e.source) || !scopeIds.has(e.target)) return e;
+      const touchesScope = scopeIds.has(e.source) || scopeIds.has(e.target);
+      const insideScope = scopeIds.has(e.source) && scopeIds.has(e.target);
+      if (!touchesScope) return e;
+      if (!insideScope) {
+        const hiddenInMatrix = mode === "matrix";
+        return {
+          ...e,
+          hidden: hiddenInMatrix,
+          data: { ...(e.data ?? {}), hiddenInMatrix },
+        };
+      }
       const parent = byId.get(e.source);
       const child = byId.get(e.target);
       if (!parent || !child) return e;
       const pParent = positions[e.source] ? { ...parent, position: positions[e.source] } : parent;
       const pChild = positions[e.target] ? { ...child, position: positions[e.target] } : child;
       const route = routeForMode(mode, pParent, pChild);
+      const hiddenInMatrix = mode === "matrix";
       return {
         ...e,
+        hidden: hiddenInMatrix,
         sourceHandle: route.sourceHandle,
         targetHandle: route.targetHandle,
         markerEnd: e.markerEnd ?? { type: MarkerType.ArrowClosed, color: "#6366f1" },
-        data: { ...(e.data ?? {}), edgeType: "branch", curveStyle: route.curveStyle },
+        data: { ...(e.data ?? {}), edgeType: "branch", curveStyle: route.curveStyle, hiddenInMatrix },
       };
     });
 
