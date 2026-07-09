@@ -2,10 +2,10 @@
 
 import { create } from "zustand";
 import { LOCAL_STORAGE_KEYS } from "@/lib/config";
-import type { AppSettings, CanvasTool } from "@/lib/types";
+import type { AppSettings, CanvasTool, ShapeType } from "@/lib/types";
 import { DEFAULT_APP_SETTINGS } from "@/lib/types";
 
-export type ShapeVariant = "rectangle" | "rounded" | "circle" | "triangle" | "diamond" | "hexagon" | "star" | "arrow" | "capsule";
+export type ShapeVariant = ShapeType;
 
 interface UIState {
   activeTool: CanvasTool;

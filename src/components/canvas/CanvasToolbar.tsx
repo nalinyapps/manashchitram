@@ -5,7 +5,7 @@ import {
   MousePointer2, Hand, StickyNote, Type, Square, Spline, Frame,
   BookOpen, Scroll, GraduationCap, ChevronRight,
   Circle, Triangle, Diamond, Hexagon, Star, ArrowRight,
-  RectangleHorizontal, Network,
+  RectangleHorizontal, Network, FileText, Database, Cloud, Flower2, Leaf, SquareStack,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/components/ui/tooltip";
@@ -21,15 +21,43 @@ interface ShapeItem {
   icon: React.ReactNode;
 }
 
+function MiniPolygonIcon({ points }: { points: string }) {
+  return (
+    <svg viewBox="0 0 24 24" className="h-5 w-5" aria-hidden="true">
+      <polygon points={points} fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function MiniPathIcon({ d }: { d: string }) {
+  return (
+    <svg viewBox="0 0 24 24" className="h-5 w-5" aria-hidden="true">
+      <path d={d} fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 const SHAPES: ShapeItem[] = [
   { variant: "rectangle", label: "Rectangle", icon: <Square className="h-5 w-5 stroke-[1.5]" /> },
   { variant: "rounded",   label: "Rounded",   icon: <RectangleHorizontal className="h-5 w-5 stroke-[1.5]" /> },
   { variant: "circle",    label: "Circle",    icon: <Circle className="h-5 w-5 stroke-[1.5]" /> },
+  { variant: "capsule",   label: "Capsule",   icon: <RectangleHorizontal className="h-5 w-5 stroke-[1.5]" /> },
   { variant: "triangle",  label: "Triangle",  icon: <Triangle className="h-5 w-5 stroke-[1.5]" /> },
   { variant: "diamond",   label: "Diamond",   icon: <Diamond className="h-5 w-5 stroke-[1.5]" /> },
   { variant: "hexagon",   label: "Hexagon",   icon: <Hexagon className="h-5 w-5 stroke-[1.5]" /> },
   { variant: "star",      label: "Star",      icon: <Star className="h-5 w-5 stroke-[1.5]" /> },
   { variant: "arrow",     label: "Arrow",     icon: <ArrowRight className="h-5 w-5 stroke-[1.5]" /> },
+  { variant: "callout",   label: "Callout",   icon: <MiniPolygonIcon points="2,2 22,2 22,17 15,17 12,22 9,17 2,17" /> },
+  { variant: "parallelogram", label: "Data", icon: <MiniPolygonIcon points="6,3 22,3 18,21 2,21" /> },
+  { variant: "trapezoid", label: "Manual operation", icon: <MiniPolygonIcon points="6,3 18,3 22,21 2,21" /> },
+  { variant: "document", label: "Document", icon: <FileText className="h-5 w-5 stroke-[1.5]" /> },
+  { variant: "database", label: "Database", icon: <Database className="h-5 w-5 stroke-[1.5]" /> },
+  { variant: "predefinedProcess", label: "Predefined process", icon: <SquareStack className="h-5 w-5 stroke-[1.5]" /> },
+  { variant: "delay", label: "Delay", icon: <MiniPathIcon d="M4 3h8c5 0 9 4 9 9s-4 9-9 9H4z" /> },
+  { variant: "cloud", label: "Cloud", icon: <Cloud className="h-5 w-5 stroke-[1.5]" /> },
+  { variant: "offPageConnector", label: "Off-page connector", icon: <MiniPolygonIcon points="3,3 21,3 21,16 12,22 3,16" /> },
+  { variant: "flower", label: "Flower", icon: <Flower2 className="h-5 w-5 stroke-[1.5]" /> },
+  { variant: "leaf", label: "Leaf", icon: <Leaf className="h-5 w-5 stroke-[1.5]" /> },
 ];
 
 /* ── Sanskrit submenu ── */
@@ -125,7 +153,7 @@ function ShapesBtn() {
         <TooltipContent side={panelSide} className="text-xs">Shapes</TooltipContent>
       </Tooltip>
 
-      <PopoverContent side={panelSide} align="center" className="w-auto p-2" sideOffset={12}>
+      <PopoverContent side={panelSide} align="center" className="max-h-[70vh] w-auto overflow-y-auto p-2" sideOffset={12}>
         <p className="mb-2 px-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Shapes</p>
         <div className="grid grid-cols-4 gap-1">
           {SHAPES.map((s) => (

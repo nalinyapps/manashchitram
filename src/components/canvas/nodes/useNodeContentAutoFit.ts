@@ -38,7 +38,11 @@ function fallbackSize(node: Node | undefined): { width: number; height: number }
   if (node?.type === "sticky") return { width: 180, height: 90 };
   if (node?.type === "shape") {
     const shapeType = ((node.data ?? {}) as Record<string, unknown>).shapeType;
-    if (shapeType === "circle" || shapeType === "star") return { width: 100, height: 100 };
+    if (shapeType === "circle" || shapeType === "diamond" || shapeType === "star" || shapeType === "flower") return { width: 120, height: 120 };
+    if (shapeType === "leaf") return { width: 160, height: 96 };
+    if (["document", "database", "predefinedProcess", "delay", "cloud"].includes(String(shapeType))) {
+      return { width: 170, height: 96 };
+    }
     return { width: 140, height: 80 };
   }
   return { width: 180, height: 80 };
@@ -59,8 +63,9 @@ function verticalSafety(node: Node | undefined): number {
   if (node?.type !== "shape") return 56;
   const shapeType = ((node.data ?? {}) as Record<string, unknown>).shapeType;
   if (shapeType === "triangle") return 92;
-  if (shapeType === "diamond" || shapeType === "star") return 86;
+  if (shapeType === "diamond" || shapeType === "star" || shapeType === "flower") return 90;
   if (shapeType === "circle") return 78;
+  if (shapeType === "callout" || shapeType === "offPageConnector") return 86;
   return 64;
 }
 
@@ -69,8 +74,12 @@ function shapeHeightFactor(node: Node | undefined): number {
   const shapeType = ((node.data ?? {}) as Record<string, unknown>).shapeType;
   if (shapeType === "triangle") return 1.55;
   if (shapeType === "diamond" || shapeType === "star") return 1.42;
+  if (shapeType === "flower") return 1.7;
   if (shapeType === "circle") return 1.35;
   if (shapeType === "hexagon" || shapeType === "arrow") return 1.2;
+  if (["parallelogram", "trapezoid", "document", "database", "predefinedProcess", "delay", "cloud", "leaf"].includes(String(shapeType))) {
+    return 1.24;
+  }
   return 1;
 }
 
