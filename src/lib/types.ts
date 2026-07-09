@@ -150,6 +150,8 @@ export interface RadialChartRing {
 export interface RadialChartData {
   enabled?: boolean;
   rotation?: number;
+  segmentBorderColor?: string;
+  segmentBorderWidth?: number;
   centerText?: string;
   centerColor?: string;
   centerTextColor?: string;

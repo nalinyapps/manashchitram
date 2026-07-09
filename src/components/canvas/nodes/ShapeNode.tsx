@@ -132,17 +132,17 @@ function annularSectorPath(innerRadius: number, outerRadius: number, startAngle:
   ].join(" ");
 }
 
-function splitTextLines(text: string | undefined, maxLines = 3): string[] {
+function wrapTextLines(text: string | undefined, maxChars: number, maxLines = 3): string[] {
   if (!text?.trim()) return [];
   const explicit = text.split(/\n/).map((line) => line.trim()).filter(Boolean);
   if (explicit.length > 1) return explicit.slice(0, maxLines);
   const words = text.trim().split(/\s+/);
-  if (words.length <= 2) return [text.trim()];
+  if (words.length <= 2 && text.trim().length <= maxChars) return [text.trim()];
   const lines: string[] = [];
   let current = "";
   for (const word of words) {
     const next = current ? `${current} ${word}` : word;
-    if (next.length > 14 && current) {
+    if (next.length > maxChars && current) {
       lines.push(current);
       current = word;
     } else {
@@ -154,18 +154,65 @@ function splitTextLines(text: string | undefined, maxLines = 3): string[] {
   return lines;
 }
 
+function splitTextLines(text: string | undefined, maxLines = 3): string[] {
+  return wrapTextLines(text, 14, maxLines);
+}
+
+function fitSegmentText(
+  text: string | undefined,
+  arcLength: number,
+  radialBand: number,
+  preferredFontSize?: number
+): { lines: string[]; fontSize: number } {
+  const preferred = preferredFontSize ?? Math.max(2.8, Math.min(7.8, radialBand * 0.34));
+  const maxLines = Math.max(1, Math.min(4, Math.floor((radialBand * 0.9) / Math.max(2.4, preferred * 0.92))));
+  const charsPerLine = Math.max(2, Math.floor((arcLength * 0.82) / Math.max(1.4, preferred * 0.55)));
+  const lines = wrapTextLines(text, charsPerLine, maxLines);
+  const longest = Math.max(1, ...lines.map((line) => line.length));
+  const widthFit = (arcLength * 0.9) / (longest * 0.58);
+  const heightFit = (radialBand * 0.82) / (Math.max(1, lines.length) * 1.12);
+  return {
+    lines,
+    fontSize: Math.max(2.2, Math.min(preferred, widthFit, heightFit)),
+  };
+}
+
 function chartRingSegments(ring: RadialChartRing): RadialChartSegment[] {
   const count = Math.max(1, Math.min(72, Math.round(ring.segmentCount || 1)));
   const segments = ring.segments ?? [];
   return Array.from({ length: count }, (_, index) => segments[index] ?? { id: `segment-${index + 1}` });
 }
 
+type ChartTextEdit =
+  | { kind: "segment"; ringIndex: number; segmentIndex: number; x: number; y: number; width: number; rotation: number; value: string }
+  | { kind: "center"; x: number; y: number; width: number; rotation: number; value: string };
+
+function updateRadialSegmentText(chart: RadialChartData, ringIndex: number, segmentIndex: number, text: string): RadialChartData {
+  const rings = chart.rings ?? [];
+  return {
+    ...chart,
+    rings: rings.map((ring, idx) => {
+      if (idx !== ringIndex) return ring;
+      const segments = chartRingSegments(ring).map((segment, sIdx) =>
+        sIdx === segmentIndex ? { ...segment, text } : segment
+      );
+      return { ...ring, segments };
+    }),
+  };
+}
+
 function RadialChartLayer({
   chart,
   borderColor,
+  editingText,
+  onSegmentEdit,
+  onCenterEdit,
 }: {
   chart?: RadialChartData;
   borderColor: string;
+  editingText?: ChartTextEdit | null;
+  onSegmentEdit?: (edit: ChartTextEdit & { kind: "segment" }) => void;
+  onCenterEdit?: (edit: ChartTextEdit & { kind: "center" }) => void;
 }) {
   if (!chart?.enabled) return null;
   const rings = chart.rings?.length ? chart.rings : [{ id: "ring-1", segmentCount: 6 }];
@@ -173,6 +220,8 @@ function RadialChartLayer({
   const outerRadius = 49;
   const ringThickness = rings.length ? (outerRadius - centerRadius) / rings.length : 0;
   const rotation = chart.rotation ?? 0;
+  const segmentBorderColor = chart.segmentBorderColor ?? borderColor;
+  const segmentBorderWidth = Math.max(0, chart.segmentBorderWidth ?? 0.6);
 
   return (
     <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="pointer-events-none absolute inset-0 z-[2] h-full w-full">
@@ -188,21 +237,43 @@ function RadialChartLayer({
           const textPoint = polarPoint(50, 50, textRadius, mid);
           const textRotation = ((mid + 90) % 360 + 360) % 360;
           const adjustedTextRotation = textRotation > 90 && textRotation < 270 ? textRotation + 180 : textRotation;
-          const lines = splitTextLines(segment.text);
-          const fontSize = segment.fontSize ?? Math.max(2.8, Math.min(7.5, ringThickness * 0.26));
+          const angleWidth = 360 / segments.length;
+          const arcLength = (2 * Math.PI * textRadius * angleWidth) / 360;
+          const { lines, fontSize } = fitSegmentText(segment.text, arcLength, ringThickness, segment.fontSize);
+          const isEditingSegment =
+            editingText?.kind === "segment" &&
+            editingText.ringIndex === ringIndex &&
+            editingText.segmentIndex === segmentIndex;
           return (
             <g key={`${ring.id}-${segment.id}-${segmentIndex}`}>
               <path
                 d={annularSectorPath(innerRadius, segmentOuterRadius, start, end)}
+                className="nodrag nopan cursor-text"
                 fill={segment.fillColor ?? (ringIndex % 2 ? "rgba(255,255,255,0.28)" : "rgba(255,255,255,0.12)")}
-                stroke={borderColor}
-                strokeWidth={0.28}
+                stroke={segmentBorderWidth > 0 ? segmentBorderColor : "none"}
+                strokeWidth={segmentBorderWidth}
                 vectorEffect="non-scaling-stroke"
+                pointerEvents="auto"
+                onPointerDown={(event) => event.stopPropagation()}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onSegmentEdit?.({
+                    kind: "segment",
+                    ringIndex,
+                    segmentIndex,
+                    x: textPoint.x,
+                    y: textPoint.y,
+                    width: Math.max(64, Math.min(220, arcLength * 2.5)),
+                    rotation: adjustedTextRotation,
+                    value: segment.text ?? "",
+                  });
+                }}
               />
-              {lines.length > 0 && (
+              {lines.length > 0 && !isEditingSegment && (
                 <text
                   x={textPoint.x}
                   y={textPoint.y}
+                  pointerEvents="none"
                   textAnchor="middle"
                   dominantBaseline="middle"
                   fill={segment.textColor ?? "#111827"}
@@ -227,15 +298,30 @@ function RadialChartLayer({
             cx="50"
             cy="50"
             r={centerRadius}
+            className="nodrag nopan cursor-text"
             fill={chart.centerColor ?? "rgba(255,255,255,0.9)"}
-            stroke={borderColor}
-            strokeWidth={0.45}
+            stroke={segmentBorderWidth > 0 ? segmentBorderColor : borderColor}
+            strokeWidth={Math.max(0.45, segmentBorderWidth)}
             vectorEffect="non-scaling-stroke"
+            pointerEvents="auto"
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={(event) => {
+              event.stopPropagation();
+              onCenterEdit?.({
+                kind: "center",
+                x: 50,
+                y: 50,
+                width: Math.max(72, centerRadius * 4.5),
+                rotation: 0,
+                value: chart.centerText ?? "",
+              });
+            }}
           />
-          {chart.centerText && (
+          {chart.centerText && editingText?.kind !== "center" && (
             <text
               x="50"
               y="50"
+              pointerEvents="none"
               textAnchor="middle"
               dominantBaseline="middle"
               fill={chart.centerTextColor ?? "#111827"}
@@ -456,6 +542,7 @@ function ShapeNodeComponent({ id, data, selected }: NodeProps) {
   );
 
   const [editing, setEditing] = useState(false);
+  const [chartTextEdit, setChartTextEdit] = useState<ChartTextEdit | null>(null);
   const [initialContent] = useState(() => dd.richText as string || (d.text as string) || "");
   const editHistoryCaptured = useRef(false);
   const editDirty = useRef(false);
@@ -491,6 +578,7 @@ function ShapeNodeComponent({ id, data, selected }: NodeProps) {
   const shapeStyle: CSSProperties = CLIP_PATHS[shapeType]
     ? { clipPath: CLIP_PATHS[shapeType] }
     : { borderRadius: bRadius };
+  const activeChartTextEdit = selected && radialChart?.enabled ? chartTextEdit : null;
   const visualRotationStyle: CSSProperties = {
     transform: rotation ? `rotate(${rotation}deg)` : undefined,
     transformOrigin: "center",
@@ -512,6 +600,18 @@ function ShapeNodeComponent({ id, data, selected }: NodeProps) {
     updateNodeData(id, { concentricLayers: [...concentricLayers, nextLayer] });
   }, [bStyle, bWidth, borderColor, concentricLayers, dd.fontSize, dd.textColor, id, pushHistory, shapeType, updateNodeData]);
 
+  const updateChartEditText = useCallback((value: string) => {
+    if (!activeChartTextEdit) return;
+    const latest = useCanvasStore.getState().nodes.find((node) => node.id === id)?.data as ShapeNodeData | undefined;
+    const chart = latest?.radialChart ?? radialChart;
+    if (!chart) return;
+    const nextChart = activeChartTextEdit.kind === "center"
+      ? { ...chart, centerText: value }
+      : updateRadialSegmentText(chart, activeChartTextEdit.ringIndex, activeChartTextEdit.segmentIndex, value);
+    setChartTextEdit({ ...activeChartTextEdit, value } as ChartTextEdit);
+    updateNodeData(id, { radialChart: nextChart });
+  }, [activeChartTextEdit, id, radialChart, updateNodeData]);
+
   return (
     <>
       <NodeResizer minWidth={60} minHeight={60} isVisible={selected && !editing && !isDrawing}
@@ -521,7 +621,7 @@ function ShapeNodeComponent({ id, data, selected }: NodeProps) {
         ref={boxRef}
         className="group relative flex h-full w-full items-center justify-center"
         onDoubleClick={() => {
-          if (isDrawing) return;
+          if (isDrawing || radialChart?.enabled) return;
           editHistoryCaptured.current = false;
           editDirty.current = false;
           setEditing(true);
@@ -573,7 +673,52 @@ function ShapeNodeComponent({ id, data, selected }: NodeProps) {
             />
           </div>
 
-          <RadialChartLayer chart={radialChart} borderColor={borderColor} />
+            <RadialChartLayer
+            chart={radialChart}
+            borderColor={borderColor}
+            editingText={activeChartTextEdit}
+            onSegmentEdit={(edit) => {
+              editHistoryCaptured.current = false;
+              editDirty.current = false;
+              pushHistory();
+              setEditing(false);
+              setChartTextEdit(edit);
+            }}
+            onCenterEdit={(edit) => {
+              editHistoryCaptured.current = false;
+              editDirty.current = false;
+              pushHistory();
+              setEditing(false);
+              setChartTextEdit(edit);
+            }}
+          />
+
+          {activeChartTextEdit && (
+            <input
+              autoFocus
+              aria-label={activeChartTextEdit.kind === "center" ? "Edit chart center text" : "Edit chart segment text"}
+              name={activeChartTextEdit.kind === "center" ? "radial-chart-inline-center" : "radial-chart-inline-segment"}
+              className="nodrag nopan absolute z-[40] rounded-md border border-primary bg-background/95 px-2 py-1 text-center text-xs font-medium shadow-lg outline-none ring-2 ring-primary/20"
+              value={activeChartTextEdit.value}
+              style={{
+                left: `${activeChartTextEdit.x}%`,
+                top: `${activeChartTextEdit.y}%`,
+                width: activeChartTextEdit.width,
+                transform: `translate(-50%, -50%) rotate(${activeChartTextEdit.rotation}deg)`,
+                transformOrigin: "center",
+              }}
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={(event) => event.stopPropagation()}
+              onChange={(event) => updateChartEditText(event.target.value)}
+              onBlur={() => setChartTextEdit(null)}
+              onKeyDown={(event) => {
+                event.stopPropagation();
+                if (event.key === "Enter" || event.key === "Escape") {
+                  event.currentTarget.blur();
+                }
+              }}
+            />
+          )}
 
           {concentricLayers.map((layer, index) => {
             const inset = concentricInset(index, concentricLayers.length);
@@ -608,28 +753,29 @@ function ShapeNodeComponent({ id, data, selected }: NodeProps) {
             );
           })}
 
-          {/* Text */}
-          <div className={cn(
-            "nodrag nopan relative z-10 flex h-full w-full items-center justify-center px-3 text-center text-sm font-medium text-foreground",
-            editing && "cursor-text"
-          )}>
-            <div ref={contentRef} className="w-full" style={getTextStyle(dd)}>
-              <RichTextEditor
-                initialContent={initialContent}
-                editable={editing}
-                placeholder="Double-click…"
-                className="[&_.ProseMirror]:text-center"
-                blockAlign={dd.textAlign as "left" | "center" | "right" | "justify" | undefined}
-                onChange={(html) => {
-                  captureTextHistory();
-                  const plain = html.replace(/<[^>]+>/g, "").trim();
-                  updateNodeData(id, { richText: html, text: plain });
-                }}
-                onContentSizeChange={(size) => fitNodeToContent(id, size)}
-                onBlur={finishEditing}
-              />
+          {!radialChart?.enabled && (
+            <div className={cn(
+              "nodrag nopan relative z-10 flex h-full w-full items-center justify-center px-3 text-center text-sm font-medium text-foreground",
+              editing && "cursor-text"
+            )}>
+              <div ref={contentRef} className="w-full" style={getTextStyle(dd)}>
+                <RichTextEditor
+                  initialContent={initialContent}
+                  editable={editing}
+                  placeholder="Double-click…"
+                  className="[&_.ProseMirror]:text-center"
+                  blockAlign={dd.textAlign as "left" | "center" | "right" | "justify" | undefined}
+                  onChange={(html) => {
+                    captureTextHistory();
+                    const plain = html.replace(/<[^>]+>/g, "").trim();
+                    updateNodeData(id, { richText: html, text: plain });
+                  }}
+                  onContentSizeChange={(size) => fitNodeToContent(id, size)}
+                  onBlur={finishEditing}
+                />
+              </div>
             </div>
-          </div>
+          )}
         </div>
 
         {selected && !editing && !isDrawing && (

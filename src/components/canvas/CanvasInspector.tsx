@@ -90,6 +90,8 @@ function createDefaultRadialChart(centerText = ""): RadialChartData {
   return {
     enabled: true,
     rotation: 0,
+    segmentBorderColor: "#ffffff",
+    segmentBorderWidth: 0.8,
     centerText,
     centerColor: "#ffffff",
     centerTextColor: "#111827",
@@ -107,6 +109,8 @@ function normalizeRadialChart(chart: RadialChartData | undefined, centerText = "
     ...chart,
     enabled: chart.enabled ?? true,
     rotation: chart.rotation ?? 0,
+    segmentBorderColor: chart.segmentBorderColor ?? "#ffffff",
+    segmentBorderWidth: chart.segmentBorderWidth ?? 0.8,
     centerRadius: chart.centerRadius ?? 14,
     centerText: chart.centerText ?? centerText,
     centerColor: chart.centerColor ?? "#ffffff",
@@ -827,7 +831,7 @@ export function CanvasInspector({ compact = false }: { compact?: boolean }) {
                   />
                   <div className="grid grid-cols-2 gap-1.5">
                     <label className="space-y-1 text-[9px] uppercase tracking-wider text-muted-foreground">
-                      Center
+                      Center fill
                       <input
                         aria-label="Radial chart center fill color"
                         name="radial-chart-center-fill"
@@ -848,6 +852,29 @@ export function CanvasInspector({ compact = false }: { compact?: boolean }) {
                         className="h-7 w-full rounded border border-border bg-background"
                       />
                     </label>
+                  </div>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    <label className="space-y-1 text-[9px] uppercase tracking-wider text-muted-foreground">
+                      Split border
+                      <input
+                        aria-label="Radial chart split border color"
+                        name="radial-chart-split-border-color"
+                        type="color"
+                        value={hexInputColor(activeRadialChart.segmentBorderColor, "#ffffff")}
+                        onChange={(event) => setRadialChart({ ...activeRadialChart, segmentBorderColor: event.target.value, enabled: true })}
+                        className="h-7 w-full rounded border border-border bg-background"
+                      />
+                    </label>
+                    <div>
+                      <p className="mb-1 text-[9px] uppercase tracking-wider text-muted-foreground">Border size</p>
+                      <SliderControl
+                        value={activeRadialChart.segmentBorderWidth ?? 0.8}
+                        min={0}
+                        max={4}
+                        step={0.1}
+                        onChange={(value) => setRadialChart({ ...activeRadialChart, segmentBorderWidth: value, enabled: true })}
+                      />
+                    </div>
                   </div>
                   <div>
                     <p className="mb-1 text-[9px] text-muted-foreground">Center size</p>
