@@ -72,7 +72,7 @@ function TextBlockNodeComponent({ id, data, selected }: NodeProps) {
     <>
       <NodeResizer minWidth={160} minHeight={40} isVisible={selected && !editing && !isDrawing} />
       <div
-        className={cn("group relative w-full px-4 py-3")}
+        className={cn("group relative h-full w-full px-4 py-3")}
         style={{
           backgroundColor: fillColor ?? "transparent",
           border: bWidth > 0 ? `${bWidth}px ${bStyle} ${borderColor ?? "transparent"}` : undefined,

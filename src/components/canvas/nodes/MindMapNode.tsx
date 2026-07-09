@@ -83,7 +83,7 @@ function MindMapNodeComponent({ id, data, selected }: NodeProps) {
       <NodeResizer minWidth={120} minHeight={40} isVisible={selected && !editing && !isDrawing} />
       <div
         className={cn(
-          "group relative w-full px-4 py-3 shadow-md transition-shadow",
+          "group relative h-full w-full px-4 py-3 shadow-md transition-shadow",
           selected && "ring-2 ring-primary ring-offset-2 ring-offset-background shadow-lg",
           d.locked && "opacity-75"
         )}

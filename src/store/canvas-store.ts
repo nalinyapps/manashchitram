@@ -25,7 +25,7 @@ interface HistoryEntry {
   edges: Edge[];
 }
 
-type ContentSize = { width: number; height: number };
+type ContentSize = { width: number; height: number; lineCount?: number; lineHeight?: number };
 
 interface CanvasState {
   board: VidyaBoard | null;
@@ -206,6 +206,7 @@ const AUTOFIT_NODE_TYPES = new Set(["shape", "sticky", "text", "mindmap"]);
 const AUTOFIT_FIELDS = new Set([
   "text", "richText", "label", "title", "topic", "devanagari", "iast", "translation",
   "rule", "fontSize", "fontFamily", "fontStyle", "fontWeight", "textAlign",
+  "shapeType", "borderWidth", "borderRadius", "borderStyle",
 ]);
 
 function clampValue(value: number, min: number, max: number): number {
@@ -231,17 +232,18 @@ function styleSizeOf(node: Node): { w: number; h: number } {
 }
 
 function stripHtmlToLines(value: string): string[] {
-  return value
+  const lines = value
     .replace(/<br\s*\/?>/gi, "\n")
-    .replace(/<\/p>/gi, "\n")
+    .replace(/<\/(p|div|li|h[1-6])>/gi, "\n")
     .replace(/<[^>]+>/g, "")
     .replace(/&nbsp;/g, " ")
     .replace(/&amp;/g, "&")
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")
-    .split(/\n+/)
+    .split(/\n/)
     .map((line) => line.replace(/\s+/g, " ").trim())
-    .filter(Boolean);
+    .filter((line, index, all) => line || (index > 0 && index < all.length - 1));
+  return lines.some(Boolean) ? lines : [];
 }
 
 function nodeTextLines(data: Record<string, unknown>): string[] {
@@ -249,9 +251,9 @@ function nodeTextLines(data: Record<string, unknown>): string[] {
   if (richText.length) return richText;
   const text = getNodeText(data);
   return text
-    .split(/\n+/)
+    .split(/\n/)
     .map((line) => line.trim())
-    .filter(Boolean);
+    .filter((line, index, all) => line || (index > 0 && index < all.length - 1));
 }
 
 function maxInlineFontSize(data: Record<string, unknown>): number | null {
@@ -261,8 +263,38 @@ function maxInlineFontSize(data: Record<string, unknown>): number | null {
   return sizes.length ? Math.max(...sizes) : null;
 }
 
+function textPaddingFor(node: Node, data: Record<string, unknown>): { x: number; y: number } {
+  const borderWidth = typeof data.borderWidth === "number" ? data.borderWidth : 2;
+  if (node.type === "sticky") return { x: 62 + borderWidth * 2, y: 58 + borderWidth * 2 };
+  if (node.type === "text") return { x: 62 + borderWidth * 2, y: 54 + borderWidth * 2 };
+  if (node.type === "mindmap") return { x: 64 + borderWidth * 2, y: 56 + borderWidth * 2 };
+  return { x: 70 + borderWidth * 2, y: 62 + borderWidth * 2 };
+}
+
+function shapeFitFactor(shapeType: string): { width: number; height: number } {
+  switch (shapeType) {
+    case "circle":
+      return { width: 1.42, height: 1.42 };
+    case "star":
+      return { width: 1.62, height: 1.62 };
+    case "diamond":
+      return { width: 1.52, height: 1.52 };
+    case "triangle":
+      return { width: 1.36, height: 1.68 };
+    case "hexagon":
+      return { width: 1.2, height: 1.2 };
+    case "arrow":
+      return { width: 1.42, height: 1.28 };
+    case "capsule":
+      return { width: 1.1, height: 1.08 };
+    default:
+      return { width: 1, height: 1 };
+  }
+}
+
 function wrappedLineCount(lines: string[], maxChars: number): number {
   let count = 0;
+  const safeMaxChars = Math.max(1, maxChars);
   for (const line of lines) {
     const words = line.split(/\s+/).filter(Boolean);
     if (!words.length) {
@@ -272,16 +304,16 @@ function wrappedLineCount(lines: string[], maxChars: number): number {
     let current = 0;
     for (const word of words) {
       const wordLength = word.length;
-      if (wordLength >= maxChars) {
+      if (wordLength >= safeMaxChars) {
         if (current > 0) {
           count += 1;
           current = 0;
         }
-        count += Math.ceil(wordLength / maxChars);
+        count += Math.ceil(wordLength / safeMaxChars);
         continue;
       }
       const nextLength = current === 0 ? wordLength : current + 1 + wordLength;
-      if (nextLength > maxChars) {
+      if (nextLength > safeMaxChars) {
         count += 1;
         current = wordLength;
       } else {
@@ -311,8 +343,9 @@ function contentFitSize(node: Node, measuredContent?: ContentSize): { width: num
   const minWidth = node.type === "text" ? 160 : node.type === "sticky" ? 180 : 140;
   const minHeight = node.type === "sticky" ? 90 : node.type === "shape" ? 70 : 48;
   const maxWidth = node.type === "text" ? 760 : node.type === "sticky" ? 620 : 680;
-  const padX = node.type === "sticky" ? 36 : 44;
-  const padY = node.type === "sticky" ? 34 : 30;
+  const padding = textPaddingFor(node, data);
+  const padX = padding.x;
+  const padY = padding.y;
   const preferredChars = clampValue(
     Math.ceil(Math.max(longestWord + 3, Math.sqrt(Math.max(text.length, 1)) * 4.2)),
     18,
@@ -320,7 +353,19 @@ function contentFitSize(node: Node, measuredContent?: ContentSize): { width: num
   );
   const width = clampValue(Math.ceil(preferredChars * charWidth + padX), minWidth, maxWidth);
   const charsPerLine = Math.max(8, Math.floor((width - padX) / charWidth));
-  const height = Math.ceil(wrappedLineCount(lines, charsPerLine) * lineHeight + padY);
+  const currentCharsPerLine = Math.max(8, Math.floor((currentWidth - padX) / charWidth));
+  const measuredLineHeight = measuredContent?.lineHeight && Number.isFinite(measuredContent.lineHeight)
+    ? measuredContent.lineHeight
+    : lineHeight;
+  const measuredLineCount = measuredContent?.lineCount && Number.isFinite(measuredContent.lineCount)
+    ? measuredContent.lineCount
+    : 0;
+  const lineAwareCount = Math.max(
+    wrappedLineCount(lines, charsPerLine),
+    wrappedLineCount(lines, currentCharsPerLine),
+    measuredLineCount
+  );
+  const height = Math.ceil(lineAwareCount * Math.max(lineHeight, measuredLineHeight) + padY);
 
   let targetWidth = Math.max(currentWidth, width);
   let targetHeight = Math.max(currentHeight, Math.max(minHeight, height));
@@ -335,14 +380,15 @@ function contentFitSize(node: Node, measuredContent?: ContentSize): { width: num
     }
   }
   const shapeType = (data.shapeType as string | undefined) ?? "";
+  if (node.type === "shape" && shapeType) {
+    const factor = shapeFitFactor(shapeType);
+    targetWidth = Math.max(targetWidth, Math.ceil(width * factor.width));
+    targetHeight = Math.max(targetHeight, Math.ceil(height * factor.height));
+  }
   if (shapeType === "circle" || shapeType === "star") {
     const size = Math.max(targetWidth, targetHeight);
     targetWidth = size;
     targetHeight = size;
-  }
-  if (shapeType === "diamond") {
-    targetWidth = Math.max(targetWidth, Math.ceil(width * 1.2));
-    targetHeight = Math.max(targetHeight, Math.ceil(height * 1.2));
   }
 
   if (targetWidth <= currentWidth && targetHeight <= currentHeight) return null;

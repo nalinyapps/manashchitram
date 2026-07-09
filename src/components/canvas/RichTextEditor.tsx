@@ -64,7 +64,7 @@ interface RichTextEditorProps {
   /** Whole-object alignment from the inspector; applied to ALL paragraphs when it changes */
   blockAlign?: "left" | "center" | "right" | "justify";
   onChange: (html: string) => void;
-  onContentSizeChange?: (size: { width: number; height: number }) => void;
+  onContentSizeChange?: (size: { width: number; height: number; lineCount?: number; lineHeight?: number }) => void;
   onBlur?: () => void;
 }
 
@@ -113,9 +113,15 @@ export function RichTextEditor({
     const element = activeEditor?.view.dom as HTMLElement | undefined;
     if (!element) return;
     const rect = element.getBoundingClientRect();
+    const computed = window.getComputedStyle(element);
+    const fontSize = Number.parseFloat(computed.fontSize) || 14;
+    const lineHeight = Number.parseFloat(computed.lineHeight) || fontSize * 1.35;
+    const text = element.innerText || element.textContent || "";
+    const explicitLines = Math.max(1, text.replace(/\r\n/g, "\n").split("\n").length);
     const width = element.scrollWidth > element.clientWidth + 2 ? Math.ceil(element.scrollWidth) : 0;
     const height = Math.ceil(Math.max(element.scrollHeight, rect.height));
-    if (height > 0) onContentSizeChangeRef.current?.({ width, height });
+    const lineCount = Math.max(explicitLines, Math.ceil(height / Math.max(1, lineHeight)));
+    if (height > 0) onContentSizeChangeRef.current?.({ width, height, lineCount, lineHeight });
   }, []);
 
   const editor = useEditor({

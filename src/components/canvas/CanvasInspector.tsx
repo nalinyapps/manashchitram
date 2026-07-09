@@ -536,8 +536,8 @@ export function CanvasInspector({ compact = false }: { compact?: boolean }) {
                 <button key={value}
                   onClick={() => {
                     // Reset borderRadius so DEFAULT_RADIUS kicks in for the new shape
-                    updateNodeData(selectedNode.id, { shapeType: value, borderRadius: undefined });
                     pushHistory();
+                    updateNodeData(selectedNode.id, { shapeType: value, borderRadius: undefined });
                   }}
                   className={cn("rounded-lg border px-1 py-1.5 text-[10px] text-center hover:bg-muted",
                     d.shapeType === value ? "border-primary bg-primary/10 text-primary font-medium" : "border-border")}>

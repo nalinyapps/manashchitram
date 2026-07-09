@@ -80,7 +80,7 @@ function StickyNoteNodeComponent({ id, data, selected }: NodeProps) {
       <NodeResizer minWidth={140} minHeight={80} isVisible={selected && !editing && !isDrawing}
         lineStyle={{ borderColor: border }} handleStyle={{ borderColor: border, backgroundColor: "white" }} />
       <div
-        className={cn("group relative w-full p-3 transition-shadow", selected ? "shadow-lg" : "shadow-md")}
+        className={cn("group relative h-full w-full p-3 transition-shadow", selected ? "shadow-lg" : "shadow-md")}
         style={{ backgroundColor: bg, border: `${bWidth}px ${bStyle} ${border}`, borderRadius: bRadius }}
         onDoubleClick={() => {
           if (isDrawing) return;
