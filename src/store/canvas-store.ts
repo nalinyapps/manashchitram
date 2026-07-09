@@ -30,6 +30,7 @@ interface CanvasState {
   viewport: Viewport;
   settings: BoardSettings;
   selectedNodeIds: string[];
+  selectedEdgeIds: string[];
   saveStatus: SaveStatus;
   history: HistoryEntry[];
   historyIndex: number;
@@ -44,6 +45,7 @@ interface CanvasState {
   setSettings: (settings: Partial<BoardSettings>) => void;
   setSaveStatus: (status: SaveStatus) => void;
   setSelectedNodeIds: (ids: string[]) => void;
+  setSelectedEdgeIds: (ids: string[]) => void;
   setSearchQuery: (query: string) => void;
   pushHistory: () => void;
   undo: () => void;
@@ -52,6 +54,7 @@ interface CanvasState {
   paste: () => void;
   duplicateSelected: () => void;
   deleteSelected: () => void;
+  deleteEdges: (ids: string[]) => void;
   createChildNode: (parentId: string) => void;
   createSiblingNode: (nodeId: string) => void;
   updateNodeData: (nodeId: string, data: Record<string, unknown>) => void;
@@ -200,6 +203,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   viewport: { x: 0, y: 0, zoom: 1 },
   settings: { ...DEFAULT_BOARD_SETTINGS },
   selectedNodeIds: [],
+  selectedEdgeIds: [],
   saveStatus: "saved",
   history: [],
   historyIndex: -1,
@@ -253,6 +257,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   setSaveStatus: (status) => set({ saveStatus: status }),
 
   setSelectedNodeIds: (ids) => set({ selectedNodeIds: ids }),
+  setSelectedEdgeIds: (ids) => set({ selectedEdgeIds: ids }),
 
   setSearchQuery: (query) => set({ searchQuery: query }),
 
@@ -336,15 +341,31 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   },
 
   deleteSelected: () => {
-    const { selectedNodeIds, nodes, edges } = get();
-    if (!selectedNodeIds.length) return;
+    const { selectedNodeIds, selectedEdgeIds, nodes, edges } = get();
+    if (!selectedNodeIds.length && !selectedEdgeIds.length) return;
     get().pushHistory();
+    const selectedNodes = new Set(selectedNodeIds);
+    const selectedEdges = new Set(selectedEdgeIds);
     set({
-      nodes: nodes.filter((n) => !selectedNodeIds.includes(n.id)),
+      nodes: nodes.filter((n) => !selectedNodes.has(n.id)),
       edges: edges.filter(
-        (e) => !selectedNodeIds.includes(e.source) && !selectedNodeIds.includes(e.target)
+        (e) => !selectedEdges.has(e.id) && !selectedNodes.has(e.source) && !selectedNodes.has(e.target)
       ),
       selectedNodeIds: [],
+      selectedEdgeIds: [],
+      saveStatus: "unsaved",
+    });
+  },
+
+  deleteEdges: (ids) => {
+    if (!ids.length) return;
+    const { edges, selectedEdgeIds } = get();
+    const removeIds = new Set(ids);
+    if (!edges.some((edge) => removeIds.has(edge.id))) return;
+    get().pushHistory();
+    set({
+      edges: edges.filter((edge) => !removeIds.has(edge.id)),
+      selectedEdgeIds: selectedEdgeIds.filter((id) => !removeIds.has(id)),
       saveStatus: "unsaved",
     });
   },

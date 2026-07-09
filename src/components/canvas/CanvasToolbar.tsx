@@ -10,8 +10,9 @@ import {
 import { cn } from "@/lib/utils";
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/components/ui/tooltip";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { useUIStore, TOOL_LABELS, TOOL_KEYS, type ShapeVariant } from "@/store/ui-store";
+import { useUIStore, type ShapeVariant } from "@/store/ui-store";
 import type { CanvasTool } from "@/lib/types";
+import { useDeviceProfile } from "@/lib/use-device-profile";
 
 /* ── Shape submenu ── */
 interface ShapeItem {
@@ -46,7 +47,7 @@ const SANSKRIT_TOOLS: SanskritItem[] = [
 
 /* ── Divider ── */
 function Divider() {
-  return <div className="my-1 mx-2 h-px bg-border" />;
+  return <div className="canvas-toolbar-divider my-1 mx-2 h-px bg-border" />;
 }
 
 /* ── Simple tool button ── */
@@ -61,6 +62,7 @@ function ToolBtn({
 }) {
   const { activeTool, setActiveTool } = useUIStore();
   const isActive = tool !== undefined && activeTool === tool;
+  const tooltipSide = useDeviceProfile().kind === "phone" ? "top" : "right";
 
   const handleClick = () => {
     if (onClick) onClick();
@@ -83,7 +85,7 @@ function ToolBtn({
           {icon}
         </button>
       </TooltipTrigger>
-      <TooltipContent side="right" className="flex items-center gap-2 rounded-lg text-xs">
+      <TooltipContent side={tooltipSide} className="flex items-center gap-2 rounded-lg text-xs">
         <span>{label}</span>
         {shortcut && (
           <kbd className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-mono text-muted-foreground">{shortcut}</kbd>
@@ -99,6 +101,7 @@ function ShapesBtn() {
   const [open, setOpen] = useState(false);
   const isActive = activeTool === "shape";
   const currentShape = SHAPES.find((s) => s.variant === shapeVariant) ?? SHAPES[1];
+  const panelSide = useDeviceProfile().kind === "phone" ? "top" : "right";
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -119,10 +122,10 @@ function ShapesBtn() {
             </button>
           </PopoverTrigger>
         </TooltipTrigger>
-        <TooltipContent side="right" className="text-xs">Shapes</TooltipContent>
+        <TooltipContent side={panelSide} className="text-xs">Shapes</TooltipContent>
       </Tooltip>
 
-      <PopoverContent side="right" align="center" className="w-auto p-2" sideOffset={12}>
+      <PopoverContent side={panelSide} align="center" className="w-auto p-2" sideOffset={12}>
         <p className="mb-2 px-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Shapes</p>
         <div className="grid grid-cols-4 gap-1">
           {SHAPES.map((s) => (
@@ -158,6 +161,7 @@ function SanskritBtn() {
   const { activeTool, setActiveTool } = useUIStore();
   const [open, setOpen] = useState(false);
   const isSanskritTool = activeTool === "sanskrit" || activeTool === "shloka" || activeTool === "grammar";
+  const panelSide = useDeviceProfile().kind === "phone" ? "top" : "right";
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -178,10 +182,10 @@ function SanskritBtn() {
             </button>
           </PopoverTrigger>
         </TooltipTrigger>
-        <TooltipContent side="right" className="text-xs">Sanskrit Cards</TooltipContent>
+        <TooltipContent side={panelSide} className="text-xs">Sanskrit Cards</TooltipContent>
       </Tooltip>
 
-      <PopoverContent side="right" align="end" className="w-44 p-2" sideOffset={12}>
+      <PopoverContent side={panelSide} align="end" className="w-44 p-2" sideOffset={12}>
         <p className="mb-1.5 px-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Sanskrit</p>
         <div className="flex flex-col gap-0.5">
           {SANSKRIT_TOOLS.map((s) => (
@@ -212,6 +216,7 @@ function SanskritBtn() {
 function LayoutBtn() {
   const layoutPanelOpen = useUIStore((s) => s.layoutPanelOpen);
   const setLayoutPanelOpen = useUIStore((s) => s.setLayoutPanelOpen);
+  const tooltipSide = useDeviceProfile().kind === "phone" ? "top" : "right";
   return (
     <Tooltip>
       <TooltipTrigger asChild>
@@ -228,7 +233,7 @@ function LayoutBtn() {
           <Network className="h-[18px] w-[18px] stroke-[1.5]" />
         </button>
       </TooltipTrigger>
-      <TooltipContent side="right" className="text-xs">Layouts</TooltipContent>
+      <TooltipContent side={tooltipSide} className="text-xs">Layouts</TooltipContent>
     </Tooltip>
   );
 }
@@ -239,7 +244,7 @@ export function CanvasToolbar() {
 
   return (
     <TooltipProvider delayDuration={300}>
-      <div className="vidya-float-panel flex flex-col items-center gap-0.5 p-1.5">
+      <div className="vidya-float-panel canvas-toolbar flex flex-col items-center gap-0.5 p-1.5">
         {/* Navigation */}
         <ToolBtn tool="select" icon={<MousePointer2 className="h-[18px] w-[18px] stroke-[1.5]" />} label="Select" shortcut="V" />
         <ToolBtn tool="pan"    icon={<Hand className="h-[18px] w-[18px] stroke-[1.5]" />}          label="Hand / Pan" shortcut="H" />

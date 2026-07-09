@@ -119,7 +119,7 @@ export function CanvasTopbar() {
   };
 
   return (
-    <header className="flex h-14 shrink-0 items-center gap-2 border-b border-border bg-card px-3 shadow-sm">
+    <header className="flex h-14 shrink-0 items-center gap-2 border-b border-border bg-card px-3 shadow-sm max-sm:gap-1 max-sm:px-2">
       {/* Logo */}
       <Link href="/app" className="mr-1 flex shrink-0 items-center gap-2">
         <div className="logo-font flex h-8 w-8 items-center justify-center rounded-xl bg-primary text-primary-foreground text-base shadow-sm">
@@ -129,7 +129,7 @@ export function CanvasTopbar() {
       </Link>
 
       {/* Divider */}
-      <div className="h-5 w-px bg-border" />
+      <div className="h-5 w-px bg-border max-sm:hidden" />
 
       {/* Undo / Redo */}
       <div className="flex items-center gap-0.5">
@@ -138,21 +138,21 @@ export function CanvasTopbar() {
       </div>
 
       {/* Divider */}
-      <div className="h-5 w-px bg-border" />
+      <div className="h-5 w-px bg-border max-sm:hidden" />
 
       {/* Board title — centered */}
-      <div className="flex flex-1 items-center justify-center gap-2">
+      <div className="flex min-w-0 flex-1 items-center justify-center gap-2">
         <Input
           value={board?.title ?? ""}
           onChange={(e) => updateBoardTitle(e.target.value)}
-          className="h-8 max-w-[220px] border-transparent bg-transparent text-sm font-semibold text-foreground shadow-none focus-visible:border-primary/40 focus-visible:bg-accent focus-visible:ring-1 focus-visible:ring-primary/30 text-center"
+          className="h-8 max-w-[220px] min-w-0 border-transparent bg-transparent text-center text-sm font-semibold text-foreground shadow-none focus-visible:border-primary/40 focus-visible:bg-accent focus-visible:ring-1 focus-visible:ring-primary/30 max-sm:max-w-[34vw]"
           aria-label="Board title"
         />
         <SaveStatus status={saveStatus} />
       </div>
 
       {/* Right actions */}
-      <div className="flex items-center gap-1">
+      <div className="flex shrink-0 items-center gap-1 max-sm:gap-0.5">
         <IconBtn
           icon={<Search className="h-4 w-4" />}
           label="Search (⌘F)"
@@ -162,6 +162,7 @@ export function CanvasTopbar() {
           icon={<Languages className="h-4 w-4" />}
           label="Sanskrit tools"
           onClick={() => setSanskritPanelOpen(true)}
+          className="max-sm:hidden"
         />
 
         {/* Export dropdown */}
@@ -189,6 +190,7 @@ export function CanvasTopbar() {
           icon={<Upload className="h-4 w-4" />}
           label="Import"
           onClick={handleImport}
+          className="max-sm:hidden"
         />
 
         {/* More options */}
@@ -208,17 +210,17 @@ export function CanvasTopbar() {
           </DropdownMenuContent>
         </DropdownMenu>
 
-        <div className="h-5 w-px bg-border mx-1" />
+        <div className="h-5 w-px bg-border mx-1 max-sm:hidden" />
 
         {/* Theme toggle */}
-        <ThemeToggle />
+        <div className="max-sm:hidden"><ThemeToggle /></div>
 
-        <div className="h-5 w-px bg-border mx-1" />
+        <div className="h-5 w-px bg-border mx-1 max-sm:hidden" />
 
         {/* Share button */}
-        <button className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-[13px] font-semibold text-primary-foreground shadow-sm hover:bg-primary/90 transition-colors">
+        <button className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-[13px] font-semibold text-primary-foreground shadow-sm transition-colors hover:bg-primary/90 max-sm:px-2">
           <Share2 className="h-3.5 w-3.5" />
-          Share
+          <span className="max-sm:hidden">Share</span>
         </button>
       </div>
     </header>

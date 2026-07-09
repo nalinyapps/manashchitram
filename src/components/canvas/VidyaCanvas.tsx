@@ -32,6 +32,7 @@ import { AUTOSAVE_DELAY_MS } from "@/lib/config";
 import type { BoardContent } from "@/lib/types";
 import { debounce } from "@/lib/utils";
 import { resolveInsertedNodeCollisions, routeForMode, type LayoutMode } from "@/lib/layout";
+import { useDeviceProfile } from "@/lib/use-device-profile";
 
 // ── Alignment guide types ──────────────────────────────────────────────────
 interface Guides { h: number[]; v: number[] }
@@ -98,7 +99,10 @@ function VidyaCanvasInner({ boardId }: { boardId: string }) {
   const setEdges    = useCanvasStore((s) => s.setEdges);
   const setViewport = useCanvasStore((s) => s.setViewport);
   const setSelectedNodeIds = useCanvasStore((s) => s.setSelectedNodeIds);
+  const setSelectedEdgeIds = useCanvasStore((s) => s.setSelectedEdgeIds);
   const activeTool  = useUIStore((s) => s.activeTool);
+  const device = useDeviceProfile();
+  const isTouchDevice = device.input !== "mouse";
 
   const { screenToFlowPosition, fitView, zoomIn, zoomOut } = useReactFlow();
   const [spacePressed, setSpacePressed] = useState(false);
@@ -167,9 +171,10 @@ function VidyaCanvasInner({ boardId }: { boardId: string }) {
       if (changes.some((c) => c.type === "select")) {
         const nodes = useCanvasStore.getState().nodes;
         setSelectedNodeIds(nodes.filter((n) => n.selected).map((n) => n.id));
+        setSelectedEdgeIds([]);
       }
     },
-    [setNodes, setSelectedNodeIds]
+    [setNodes, setSelectedNodeIds, setSelectedEdgeIds]
   );
 
   // Alignment guides — live during drag
@@ -198,13 +203,34 @@ function VidyaCanvasInner({ boardId }: { boardId: string }) {
 
   const onEdgesChange: OnEdgesChange = useCallback(
     (changes) => {
-      if (changes.some((c) => c.type === "remove" || c.type === "add")) {
+      const isStructural = changes.some((c) => c.type === "remove" || c.type === "add");
+      if (isStructural) {
         useCanvasStore.getState().pushHistory();
+        setEdges((eds) => applyEdgeChanges(changes, eds));
+      } else {
+        useCanvasStore.setState((state) => ({
+          edges: applyEdgeChanges(changes, state.edges),
+        }));
       }
-      setEdges((eds) => applyEdgeChanges(changes, eds));
+
+      if (changes.some((c) => c.type === "select")) {
+        const edges = useCanvasStore.getState().edges;
+        setSelectedEdgeIds(edges.filter((e) => e.selected).map((e) => e.id));
+        setSelectedNodeIds([]);
+      }
     },
-    [setEdges]
+    [setEdges, setSelectedEdgeIds, setSelectedNodeIds]
   );
+
+  const onEdgeClick = useCallback((event: React.MouseEvent, edge: Edge) => {
+    event.stopPropagation();
+    useCanvasStore.setState((state) => ({
+      nodes: state.nodes.map((node) => ({ ...node, selected: false })),
+      edges: state.edges.map((candidate) => ({ ...candidate, selected: candidate.id === edge.id })),
+      selectedNodeIds: [],
+      selectedEdgeIds: [edge.id],
+    }));
+  }, []);
 
   const onConnect = useCallback(
     (connection: {
@@ -294,7 +320,13 @@ function VidyaCanvasInner({ boardId }: { boardId: string }) {
   const onPaneClick = useCallback(
     (event: React.MouseEvent) => {
       const tool = useUIStore.getState().activeTool;
-      if (tool === "select" || tool === "pan") return;
+      if (tool === "select" || tool === "pan") {
+        useCanvasStore.setState((state) => ({
+          edges: state.edges.map((edge) => edge.selected ? { ...edge, selected: false } : edge),
+          selectedEdgeIds: [],
+        }));
+        return;
+      }
       const position = screenToFlowPosition({ x: event.clientX, y: event.clientY });
       useCanvasStore.getState().pushHistory();
 
@@ -416,6 +448,7 @@ function VidyaCanvasInner({ boardId }: { boardId: string }) {
       onEdgesChange={onEdgesChange}
       onConnect={onConnect}
       onReconnect={onReconnect}
+      onEdgeClick={onEdgeClick}
       onPaneClick={onPaneClick}
       onNodeDrag={onNodeDrag}
       onNodeDragStop={onNodeDragStop}
@@ -423,17 +456,23 @@ function VidyaCanvasInner({ boardId }: { boardId: string }) {
       edgeTypes={edgeTypes}
       connectionMode={ConnectionMode.Loose}
       edgesReconnectable
-      reconnectRadius={14}
+      reconnectRadius={isTouchDevice ? 28 : 14}
       minZoom={0.05}
       maxZoom={4}
       fitView
       fitViewOptions={{ padding: 0.2, maxZoom: 2 }}
       snapToGrid={settings.snapToGrid}
       snapGrid={[settings.gridSize ?? 20, settings.gridSize ?? 20]}
-      panOnDrag={activeTool === "pan" || spacePressed ? [0, 1, 2] : [1, 2]}
-      selectionOnDrag={activeTool === "select"}
+      panOnDrag={isTouchDevice ? true : activeTool === "pan" || spacePressed ? [0, 1, 2] : [1, 2]}
+      selectionOnDrag={!isTouchDevice && activeTool === "select"}
       panOnScroll
       zoomOnScroll
+      zoomOnPinch
+      preventScrolling
+      nodeClickDistance={isTouchDevice ? 8 : 0}
+      paneClickDistance={isTouchDevice ? 8 : 0}
+      nodeDragThreshold={isTouchDevice ? 6 : 1}
+      connectionRadius={isTouchDevice ? 42 : 20}
       deleteKeyCode={null}
       defaultEdgeOptions={{
         type: "branch",

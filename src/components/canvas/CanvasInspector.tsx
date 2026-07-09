@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useCallback } from "react";
+import { useState } from "react";
 import {
   Trash2, ChevronDown, ChevronRight, Lock, Unlock,
   AlignLeft, AlignCenter, AlignRight, AlignJustify,
@@ -122,10 +122,11 @@ function BorderStylePicker({ value, onChange }: {
 
 // ── Main inspector ─────────────────────────────────────────────────────────
 
-export function CanvasInspector() {
+export function CanvasInspector({ compact = false }: { compact?: boolean }) {
   const nodes           = useCanvasStore((s) => s.nodes);
   const edges           = useCanvasStore((s) => s.edges);
   const selectedNodeIds = useCanvasStore((s) => s.selectedNodeIds);
+  const selectedEdgeIds = useCanvasStore((s) => s.selectedEdgeIds);
   const settings        = useCanvasStore((s) => s.settings);
   const setSettings     = useCanvasStore((s) => s.setSettings);
   const updateNodeData  = useCanvasStore((s) => s.updateNodeData);
@@ -143,21 +144,46 @@ export function CanvasInspector() {
   const selectedNode = selectedNodeIds.length === 1
     ? nodes.find((n) => n.id === selectedNodeIds[0])
     : null;
+  const selectedEdges = edges.filter((edge) => selectedEdgeIds.includes(edge.id));
 
   // ALL hooks before any early return
   const d = (selectedNode?.data ?? {}) as Record<string, unknown>;
-  useMemo(() => {}, [d.richText, d.text]); // warm useMemo after hooks are stable
 
-  const setField = useCallback((key: string, value: unknown) => {
+  const setField = (key: string, value: unknown) => {
     if (!selectedNode) return;
     pushHistory();
     updateNodeData(selectedNode.id, { [key]: value });
-  }, [selectedNode, pushHistory, updateNodeData]);
+  };
 
   // ── No selection ──────────────────────────────────────────────────────────
   if (!selectedNode) {
+    if (selectedEdges.length) {
+      return (
+        <aside className="vidya-float-panel canvas-inspector-panel flex w-64 flex-col">
+          <div className="flex items-center justify-between border-b px-3 py-2.5">
+            <div>
+              <h3 className="text-sm font-semibold text-foreground">Connection</h3>
+              <p className="text-[10px] text-muted-foreground">
+                {selectedEdges.length === 1 ? selectedEdges[0].id.slice(0, 8) : `${selectedEdges.length} selected`}
+              </p>
+            </div>
+            <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:bg-destructive/10" onClick={deleteSelected}>
+              <Trash2 className="h-3.5 w-3.5" />
+            </Button>
+          </div>
+          {selectedEdges.length === 1 && (
+            <div className="px-3 py-3 text-xs text-muted-foreground">
+              {selectedEdges[0].source} → {selectedEdges[0].target}
+            </div>
+          )}
+        </aside>
+      );
+    }
+
+    if (compact) return null;
+
     return (
-      <aside className="vidya-float-panel flex w-64 flex-col">
+      <aside className="vidya-float-panel canvas-inspector-panel flex w-64 flex-col">
         <div className="border-b border-border px-4 py-3">
           <h3 className="text-sm font-semibold text-foreground">Canvas</h3>
           <p className="text-xs text-muted-foreground">{nodes.length} nodes · {edges.length} edges</p>
@@ -215,7 +241,7 @@ export function CanvasInspector() {
   const fontGroups    = groupFontsByCategory(FONT_OPTIONS);
 
   return (
-    <aside className="vidya-float-panel flex w-64 flex-col">
+    <aside className="vidya-float-panel canvas-inspector-panel flex w-64 flex-col">
       {/* ── Header ── */}
       <div className="flex items-center justify-between border-b px-3 py-2.5">
         <div>

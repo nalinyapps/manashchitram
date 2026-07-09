@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { useParams } from "next/navigation";
 import { getBoard } from "@/lib/storage/board-store";
 import { useCanvasStore } from "@/store/canvas-store";
@@ -13,6 +14,9 @@ import { VidyaCanvas } from "@/components/canvas/VidyaCanvas";
 import { SanskritToolsPanel } from "@/components/sanskrit/SanskritToolsPanel";
 import { CommandPalette } from "@/components/layout/CommandPalette";
 import { SearchPanel } from "@/components/layout/SearchPanel";
+import { useDeviceProfile } from "@/lib/use-device-profile";
+import { cn } from "@/lib/utils";
+import { useUIStore } from "@/store/ui-store";
 
 export default function BoardEditorPage() {
   const params = useParams();
@@ -21,6 +25,9 @@ export default function BoardEditorPage() {
   const [notFound, setNotFound] = useState(false);
   const setBoard = useCanvasStore((s) => s.setBoard);
   const pushHistory = useCanvasStore((s) => s.pushHistory);
+  const layoutPanelOpen = useUIStore((s) => s.layoutPanelOpen);
+  const device = useDeviceProfile();
+  const isPhone = device.kind === "phone";
 
   useEffect(() => {
     getBoard(boardId)
@@ -55,16 +62,21 @@ export default function BoardEditorPage() {
           <p className="mt-2 text-sm text-muted-foreground">
             Board not found or you do not have access.
           </p>
-          <a href="/app/boards" className="mt-4 inline-block text-sm text-primary hover:underline">
+          <Link href="/app/boards" className="mt-4 inline-block text-sm text-primary hover:underline">
             Back to your boards
-          </a>
+          </Link>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="flex h-screen flex-col overflow-hidden bg-background">
+    <div
+      className="flex h-[100dvh] flex-col overflow-hidden bg-background"
+      data-device-kind={device.kind}
+      data-platform={device.platform}
+      data-input={device.input}
+    >
       <CanvasTopbar />
 
       {/* Canvas + floating overlays */}
@@ -73,28 +85,54 @@ export default function BoardEditorPage() {
         <VidyaCanvas boardId={boardId} />
 
         {/* Floating left toolbar */}
-        <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
+        <div
+          className={cn(
+            "pointer-events-none absolute z-30 flex",
+            isPhone
+              ? "inset-x-0 bottom-[calc(env(safe-area-inset-bottom)+2.75rem)] justify-center px-3"
+              : "inset-y-0 left-0 items-center pl-3"
+          )}
+        >
           <div className="pointer-events-auto">
             <CanvasToolbar />
           </div>
         </div>
 
         {/* Floating layout panel (left, next to toolbar) */}
-        <div className="pointer-events-none absolute inset-y-0 left-16 flex items-start pt-3">
+        <div
+          className={cn(
+            "pointer-events-none absolute z-40 flex",
+            isPhone
+              ? "inset-x-3 bottom-[calc(env(safe-area-inset-bottom)+6.25rem)] justify-center"
+              : "inset-y-0 left-16 items-start pt-3"
+          )}
+        >
           <div className="pointer-events-auto">
             <LayoutPanel />
           </div>
         </div>
 
         {/* Floating right inspector */}
-        <div className="pointer-events-none absolute inset-y-0 right-0 flex items-start pt-3 pr-3">
-          <div className="pointer-events-auto max-h-[calc(100vh-100px)] overflow-y-auto">
-            <CanvasInspector />
+        <div
+          className={cn(
+            "pointer-events-none absolute z-40 flex",
+            isPhone
+              ? "inset-x-3 bottom-[calc(env(safe-area-inset-bottom)+6.25rem)] justify-center"
+              : "inset-y-0 right-0 items-start pt-3 pr-3"
+          )}
+        >
+          <div className="pointer-events-auto max-h-[calc(100dvh-100px)] overflow-y-auto">
+            {!(isPhone && layoutPanelOpen) && <CanvasInspector compact={isPhone} />}
           </div>
         </div>
 
         {/* Status bar inside canvas area */}
-        <div className="pointer-events-none absolute bottom-0 inset-x-0 flex justify-center pb-3">
+        <div
+          className={cn(
+            "pointer-events-none absolute inset-x-0 flex justify-center",
+            isPhone ? "bottom-[calc(env(safe-area-inset-bottom)+0.5rem)]" : "bottom-0 pb-3"
+          )}
+        >
           <div className="pointer-events-auto">
             <CanvasStatusBar />
           </div>

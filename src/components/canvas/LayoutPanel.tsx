@@ -68,7 +68,7 @@ export function LayoutPanel() {
   };
 
   return (
-    <aside className="vidya-float-panel flex max-h-[calc(100vh-100px)] w-64 flex-col">
+    <aside className="vidya-float-panel layout-panel flex max-h-[calc(100dvh-100px)] w-64 flex-col">
       <div className="flex items-center justify-between border-b px-3 py-2.5">
         <div>
           <h3 className="text-sm font-semibold">Layout</h3>

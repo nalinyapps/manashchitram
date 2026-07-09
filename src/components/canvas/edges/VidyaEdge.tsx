@@ -9,7 +9,9 @@ import {
   getStraightPath,
   type EdgeProps,
 } from "@xyflow/react";
+import { Trash2 } from "lucide-react";
 import type { VidyaEdgeData } from "@/lib/types";
+import { useCanvasStore } from "@/store/canvas-store";
 import { SmartBranchEdge } from "./SmartBranchEdge";
 
 function VidyaEdgeComponent({
@@ -25,6 +27,7 @@ function VidyaEdgeComponent({
   markerEnd,
 }: EdgeProps) {
   const d = (data ?? {}) as VidyaEdgeData;
+  const deleteEdges = useCanvasStore((s) => s.deleteEdges);
   const curveStyle = d.curveStyle ?? "smooth";
 
   let path: string;
@@ -59,12 +62,35 @@ function VidyaEdgeComponent({
         id={id}
         path={path}
         markerEnd={markerEnd}
+        interactionWidth={28}
         style={{
           stroke: d.color ?? (selected ? "#6366f1" : "#94a3b8"),
           strokeWidth: d.width ?? 2,
           strokeDasharray: d.dashed ? "6 4" : undefined,
         }}
       />
+      {selected && (
+        <EdgeLabelRenderer>
+          <button
+            type="button"
+            title="Delete connection"
+            aria-label="Delete connection"
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={(event) => {
+              event.stopPropagation();
+              deleteEdges([id]);
+            }}
+            style={{
+              position: "absolute",
+              transform: `translate(-50%, -50%) translate(${labelX}px,${labelY - (d.label ? 24 : 0)}px)`,
+              pointerEvents: "all",
+            }}
+            className="flex h-7 w-7 items-center justify-center rounded-full border bg-background text-destructive shadow-md"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+          </button>
+        </EdgeLabelRenderer>
+      )}
       {d.label && (
         <EdgeLabelRenderer>
           <div
