@@ -18,7 +18,15 @@ import {
 import { useCanvasStore } from "@/store/canvas-store";
 import { useUIStore } from "@/store/ui-store";
 import { SANSKRIT_TAG_SUGGESTIONS } from "@/lib/types";
-import type { BorderLayer, ConcentricShapeLayer, InternalFillRegion, ShapeType } from "@/lib/types";
+import type {
+  BorderLayer,
+  ConcentricShapeLayer,
+  InternalFillRegion,
+  RadialChartData,
+  RadialChartRing,
+  RadialChartSegment,
+  ShapeType,
+} from "@/lib/types";
 import type { Node } from "@xyflow/react";
 import { cn } from "@/lib/utils";
 import { ColorSwatchPicker } from "./ColorSwatchPicker";
@@ -50,10 +58,65 @@ const SHAPE_TYPES = [
   { label: "Callout",    value: "callout"   },
 ];
 
-const MAX_CONCENTRIC_LAYERS = 6;
+const CONCENTRIC_INSET_STEP = 6;
+const RADIAL_SEGMENT_COLORS = [
+  "#c7d2fe", "#bfdbfe", "#a7f3d0", "#fde68a", "#fecaca", "#fbcfe8",
+  "#ddd6fe", "#bae6fd", "#d9f99d", "#fed7aa", "#ccfbf1", "#e9d5ff",
+];
 
-function concentricInset(index: number): number {
-  return Math.min(44, 10 + index * 7);
+function concentricInset(index: number, total: number): number {
+  const step = Math.min(CONCENTRIC_INSET_STEP, 48 / Math.max(1, total + 1));
+  return step * (index + 1);
+}
+
+function hexInputColor(value: unknown, fallback: string): string {
+  return typeof value === "string" && /^#[0-9a-f]{6}$/i.test(value) ? value : fallback;
+}
+
+function normalizeRadialSegments(ring: RadialChartRing, count = ring.segmentCount): RadialChartSegment[] {
+  const safeCount = Math.max(1, Math.min(72, Math.round(count || 1)));
+  const existing = ring.segments ?? [];
+  return Array.from({ length: safeCount }, (_, index) => existing[index] ?? {
+    id: generateId(),
+    text: "",
+    fillColor: RADIAL_SEGMENT_COLORS[index % RADIAL_SEGMENT_COLORS.length],
+    textColor: "#111827",
+  });
+}
+
+function createDefaultRadialChart(centerText = ""): RadialChartData {
+  const innerRing: RadialChartRing = { id: generateId(), segmentCount: 4 };
+  const outerRing: RadialChartRing = { id: generateId(), segmentCount: 12 };
+  return {
+    enabled: true,
+    rotation: 0,
+    centerText,
+    centerColor: "#ffffff",
+    centerTextColor: "#111827",
+    centerRadius: 14,
+    rings: [
+      { ...innerRing, segments: normalizeRadialSegments(innerRing) },
+      { ...outerRing, segments: normalizeRadialSegments(outerRing) },
+    ],
+  };
+}
+
+function normalizeRadialChart(chart: RadialChartData | undefined, centerText = ""): RadialChartData {
+  if (!chart?.rings?.length) return createDefaultRadialChart(centerText);
+  return {
+    ...chart,
+    enabled: chart.enabled ?? true,
+    rotation: chart.rotation ?? 0,
+    centerRadius: chart.centerRadius ?? 14,
+    centerText: chart.centerText ?? centerText,
+    centerColor: chart.centerColor ?? "#ffffff",
+    centerTextColor: chart.centerTextColor ?? "#111827",
+    rings: chart.rings.map((ring) => ({
+      ...ring,
+      segmentCount: Math.max(1, Math.min(72, Math.round(ring.segmentCount || 1))),
+      segments: normalizeRadialSegments(ring),
+    })),
+  };
 }
 
 const CONVERT_TYPES = [
@@ -438,8 +501,32 @@ export function CanvasInspector({ compact = false }: { compact?: boolean }) {
   const borderLayers  = (d.borderLayers as BorderLayer[]) ?? [];
   const fillRegions   = (d.internalFillRegions as InternalFillRegion[]) ?? [];
   const concentricLayers = (d.concentricLayers as ConcentricShapeLayer[]) ?? [];
+  const radialChart = d.radialChart as RadialChartData | undefined;
+  const activeRadialChart = normalizeRadialChart(radialChart, (d.text as string | undefined) ?? "");
   const isDrawing     = drawingModeNodeId === selectedNode.id;
   const fontGroups    = groupFontsByCategory(FONT_OPTIONS);
+  const setRadialChart = (chart: RadialChartData) => setField("radialChart", chart);
+  const updateRadialRing = (ringIndex: number, patch: Partial<RadialChartRing>) => {
+    const rings = activeRadialChart.rings ?? [];
+    const nextRings = rings.map((ring, idx) => {
+      if (idx !== ringIndex) return ring;
+      const nextCount = patch.segmentCount ?? ring.segmentCount;
+      const nextRing = { ...ring, ...patch, segmentCount: nextCount };
+      return { ...nextRing, segments: normalizeRadialSegments(nextRing, nextCount) };
+    });
+    setRadialChart({ ...activeRadialChart, rings: nextRings, enabled: true });
+  };
+  const updateRadialSegment = (ringIndex: number, segmentIndex: number, patch: Partial<RadialChartSegment>) => {
+    const rings = activeRadialChart.rings ?? [];
+    const nextRings = rings.map((ring, idx) => {
+      if (idx !== ringIndex) return ring;
+      const segments = normalizeRadialSegments(ring).map((segment, sIdx) =>
+        sIdx === segmentIndex ? { ...segment, ...patch } : segment
+      );
+      return { ...ring, segments };
+    });
+    setRadialChart({ ...activeRadialChart, rings: nextRings, enabled: true });
+  };
 
   return (
     <aside className="vidya-float-panel canvas-inspector-panel flex w-64 flex-col">
@@ -586,42 +673,290 @@ export function CanvasInspector({ compact = false }: { compact?: boolean }) {
         )}
 
         {isShapeNode && (
+          <Section label="Transform" defaultOpen={false}>
+            <div>
+              <p className="mb-1 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Rotation</p>
+              <SliderControl
+                value={typeof d.rotation === "number" ? d.rotation : 0}
+                min={-180}
+                max={180}
+                step={1}
+                suffix="deg"
+                onChange={(value) => setField("rotation", value)}
+              />
+            </div>
+          </Section>
+        )}
+
+        {isShapeNode && (
           <Section label="Concentric" defaultOpen={false}>
             <div className="flex items-center justify-between rounded-lg border border-border px-2 py-1.5">
               <span className="text-[10px] text-muted-foreground">{concentricLayers.length} inner shapes</span>
-              <div className="flex gap-1">
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 px-2 text-xs"
+                onClick={() => {
+                  const nextLayer: ConcentricShapeLayer = {
+                    id: generateId(),
+                    shapeType: ((shapeType || "rounded") as ShapeType),
+                    fillColor: "transparent",
+                    fillOpacity: 0.16,
+                    borderColor: (d.borderColor as string) ?? (d.color as string) ?? "#4262ff",
+                    borderWidth: borderWidth || 2,
+                    borderStyle: (d.borderStyle as ConcentricShapeLayer["borderStyle"]) ?? "solid",
+                    text: "",
+                    textColor: (d.textColor as string) ?? "#111827",
+                    fontSize: (d.fontSize as number) ?? 14,
+                  };
+                  setField("concentricLayers", [...concentricLayers, nextLayer]);
+                }}
+              >
+                <Plus className="mr-1 h-3 w-3" /> Add
+              </Button>
+            </div>
+            {concentricLayers.length > 0 && (
+              <div className="space-y-2">
+                {concentricLayers.map((layer, index) => (
+                  <div key={layer.id} className="rounded-lg border border-border p-2 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] text-muted-foreground">
+                        Ring {index + 1} · inset {Math.round(concentricInset(index, concentricLayers.length) * 10) / 10}%
+                      </span>
+                      <button
+                        className="text-[10px] text-destructive hover:underline"
+                        onClick={() => setField("concentricLayers", concentricLayers.filter((_, idx) => idx !== index))}
+                      >
+                        Remove
+                      </button>
+                    </div>
+                    <Input
+                      aria-label={`Concentric ring ${index + 1} text`}
+                      name={`concentric-ring-${index + 1}-text`}
+                      value={layer.text ?? ""}
+                      placeholder="Ring text..."
+                      className="h-8 text-xs"
+                      onChange={(event) => setField("concentricLayers", concentricLayers.map((item, idx) =>
+                        idx === index ? { ...item, text: event.target.value } : item
+                      ))}
+                    />
+                    <div className="grid grid-cols-3 gap-1.5">
+                      <label className="space-y-1 text-[9px] uppercase tracking-wider text-muted-foreground">
+                        Fill
+                        <input
+                          aria-label={`Concentric ring ${index + 1} fill color`}
+                          name={`concentric-ring-${index + 1}-fill`}
+                          type="color"
+                          value={hexInputColor(layer.fillColor, "#ffffff")}
+                          onChange={(event) => setField("concentricLayers", concentricLayers.map((item, idx) =>
+                            idx === index ? { ...item, fillColor: event.target.value } : item
+                          ))}
+                          className="h-7 w-full rounded border border-border bg-background"
+                        />
+                      </label>
+                      <label className="space-y-1 text-[9px] uppercase tracking-wider text-muted-foreground">
+                        Border
+                        <input
+                          aria-label={`Concentric ring ${index + 1} border color`}
+                          name={`concentric-ring-${index + 1}-border`}
+                          type="color"
+                          value={hexInputColor(layer.borderColor, "#4262ff")}
+                          onChange={(event) => setField("concentricLayers", concentricLayers.map((item, idx) =>
+                            idx === index ? { ...item, borderColor: event.target.value } : item
+                          ))}
+                          className="h-7 w-full rounded border border-border bg-background"
+                        />
+                      </label>
+                      <label className="space-y-1 text-[9px] uppercase tracking-wider text-muted-foreground">
+                        Text
+                        <input
+                          aria-label={`Concentric ring ${index + 1} text color`}
+                          name={`concentric-ring-${index + 1}-text-color`}
+                          type="color"
+                          value={hexInputColor(layer.textColor, "#111827")}
+                          onChange={(event) => setField("concentricLayers", concentricLayers.map((item, idx) =>
+                            idx === index ? { ...item, textColor: event.target.value } : item
+                          ))}
+                          className="h-7 w-full rounded border border-border bg-background"
+                        />
+                      </label>
+                    </div>
+                    <div>
+                      <p className="mb-1 text-[9px] text-muted-foreground">Text size</p>
+                      <SliderControl
+                        value={layer.fontSize ?? 14}
+                        min={8}
+                        max={48}
+                        step={1}
+                        suffix="px"
+                        onChange={(value) => setField("concentricLayers", concentricLayers.map((item, idx) =>
+                          idx === index ? { ...item, fontSize: value } : item
+                        ))}
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </Section>
+        )}
+
+        {isShapeNode && (
+          <Section label="Split chart" defaultOpen={false}>
+            <div className="flex items-center justify-between rounded-lg border border-border px-2 py-1.5">
+              <Label className="text-xs">Radial split</Label>
+              <Switch
+                checked={!!radialChart?.enabled}
+                onCheckedChange={(checked) => {
+                  if (checked) setRadialChart({ ...activeRadialChart, enabled: true });
+                  else setRadialChart({ ...(radialChart ?? activeRadialChart), enabled: false });
+                }}
+              />
+            </div>
+
+            {radialChart?.enabled && (
+              <div className="space-y-2">
+                <div className="rounded-lg border border-border p-2 space-y-2">
+                  <Input
+                    aria-label="Radial chart center text"
+                    name="radial-chart-center-text"
+                    value={activeRadialChart.centerText ?? ""}
+                    placeholder="Center text..."
+                    className="h-8 text-xs"
+                    onChange={(event) => setRadialChart({ ...activeRadialChart, centerText: event.target.value, enabled: true })}
+                  />
+                  <div className="grid grid-cols-2 gap-1.5">
+                    <label className="space-y-1 text-[9px] uppercase tracking-wider text-muted-foreground">
+                      Center
+                      <input
+                        aria-label="Radial chart center fill color"
+                        name="radial-chart-center-fill"
+                        type="color"
+                        value={hexInputColor(activeRadialChart.centerColor, "#ffffff")}
+                        onChange={(event) => setRadialChart({ ...activeRadialChart, centerColor: event.target.value, enabled: true })}
+                        className="h-7 w-full rounded border border-border bg-background"
+                      />
+                    </label>
+                    <label className="space-y-1 text-[9px] uppercase tracking-wider text-muted-foreground">
+                      Text
+                      <input
+                        aria-label="Radial chart center text color"
+                        name="radial-chart-center-text-color"
+                        type="color"
+                        value={hexInputColor(activeRadialChart.centerTextColor, "#111827")}
+                        onChange={(event) => setRadialChart({ ...activeRadialChart, centerTextColor: event.target.value, enabled: true })}
+                        className="h-7 w-full rounded border border-border bg-background"
+                      />
+                    </label>
+                  </div>
+                  <div>
+                    <p className="mb-1 text-[9px] text-muted-foreground">Center size</p>
+                    <SliderControl
+                      value={activeRadialChart.centerRadius ?? 14}
+                      min={0}
+                      max={42}
+                      step={1}
+                      onChange={(value) => setRadialChart({ ...activeRadialChart, centerRadius: value, enabled: true })}
+                    />
+                  </div>
+                  <div>
+                    <p className="mb-1 text-[9px] text-muted-foreground">Sector rotation</p>
+                    <SliderControl
+                      value={activeRadialChart.rotation ?? 0}
+                      min={-180}
+                      max={180}
+                      step={1}
+                      suffix="deg"
+                      onChange={(value) => setRadialChart({ ...activeRadialChart, rotation: value, enabled: true })}
+                    />
+                  </div>
+                </div>
+
                 <Button
                   variant="outline"
                   size="sm"
-                  className="h-7 px-2 text-xs"
-                  disabled={concentricLayers.length >= MAX_CONCENTRIC_LAYERS}
+                  className="h-7 w-full text-xs"
                   onClick={() => {
-                    const nextLayer: ConcentricShapeLayer = {
+                    const rings = activeRadialChart.rings ?? [];
+                    const previous = rings.at(-1);
+                    const ring: RadialChartRing = {
                       id: generateId(),
-                      shapeType: ((shapeType || "rounded") as ShapeType),
-                      inset: concentricInset(concentricLayers.length),
-                      fillColor: "transparent",
-                      borderColor: (d.borderColor as string) ?? (d.color as string) ?? "#4262ff",
-                      borderWidth: borderWidth || 2,
-                      borderStyle: (d.borderStyle as ConcentricShapeLayer["borderStyle"]) ?? "solid",
+                      segmentCount: previous?.segmentCount ?? 8,
                     };
-                    setField("concentricLayers", [...concentricLayers, nextLayer]);
+                    setRadialChart({
+                      ...activeRadialChart,
+                      enabled: true,
+                      rings: [...rings, { ...ring, segments: normalizeRadialSegments(ring) }],
+                    });
                   }}
                 >
-                  <Plus className="mr-1 h-3 w-3" /> Add
+                  <Plus className="mr-1 h-3 w-3" /> Add ring
                 </Button>
-                {concentricLayers.length > 0 && (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-7 px-2 text-xs text-destructive hover:bg-destructive/10"
-                    onClick={() => setField("concentricLayers", concentricLayers.slice(0, -1))}
-                  >
-                    <Minus className="mr-1 h-3 w-3" /> Last
-                  </Button>
-                )}
+
+                <div className="space-y-2">
+                  {(activeRadialChart.rings ?? []).map((ring, ringIndex) => {
+                    const segments = normalizeRadialSegments(ring);
+                    return (
+                      <div key={ring.id} className="rounded-lg border border-border p-2 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px] text-muted-foreground">Chart ring {ringIndex + 1}</span>
+                          <button
+                            className="text-[10px] text-destructive hover:underline"
+                            onClick={() => setRadialChart({
+                              ...activeRadialChart,
+                              enabled: true,
+                              rings: (activeRadialChart.rings ?? []).filter((_, idx) => idx !== ringIndex),
+                            })}
+                          >
+                            Remove
+                          </button>
+                        </div>
+                        <div>
+                          <p className="mb-1 text-[9px] text-muted-foreground">Segments</p>
+                          <SliderControl
+                            value={ring.segmentCount}
+                            min={1}
+                            max={72}
+                            step={1}
+                            onChange={(value) => updateRadialRing(ringIndex, { segmentCount: value })}
+                          />
+                        </div>
+                        <div className="max-h-64 space-y-1.5 overflow-y-auto pr-1">
+                          {segments.map((segment, segmentIndex) => (
+                            <div key={segment.id} className="grid grid-cols-[1fr_28px_28px] items-center gap-1.5">
+                              <Input
+                                aria-label={`Ring ${ringIndex + 1} segment ${segmentIndex + 1} text`}
+                                name={`radial-ring-${ringIndex + 1}-segment-${segmentIndex + 1}-text`}
+                                value={segment.text ?? ""}
+                                placeholder={`Segment ${segmentIndex + 1}`}
+                                className="h-7 text-xs"
+                                onChange={(event) => updateRadialSegment(ringIndex, segmentIndex, { text: event.target.value })}
+                              />
+                              <input
+                                aria-label={`Ring ${ringIndex + 1} segment ${segmentIndex + 1} fill color`}
+                                name={`radial-ring-${ringIndex + 1}-segment-${segmentIndex + 1}-fill`}
+                                type="color"
+                                value={hexInputColor(segment.fillColor, RADIAL_SEGMENT_COLORS[segmentIndex % RADIAL_SEGMENT_COLORS.length])}
+                                onChange={(event) => updateRadialSegment(ringIndex, segmentIndex, { fillColor: event.target.value })}
+                                className="h-7 w-7 rounded border border-border bg-background"
+                              />
+                              <input
+                                aria-label={`Ring ${ringIndex + 1} segment ${segmentIndex + 1} text color`}
+                                name={`radial-ring-${ringIndex + 1}-segment-${segmentIndex + 1}-text-color`}
+                                type="color"
+                                value={hexInputColor(segment.textColor, "#111827")}
+                                onChange={(event) => updateRadialSegment(ringIndex, segmentIndex, { textColor: event.target.value })}
+                                className="h-7 w-7 rounded border border-border bg-background"
+                              />
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
-            </div>
+            )}
           </Section>
         )}
 
