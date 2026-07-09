@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useState, useEffect, useCallback } from "react";
+import { memo, useState, useEffect, useRef, useCallback } from "react";
 import { Handle, Position, NodeResizer, type NodeProps } from "@xyflow/react";
 import { Plus, ChevronDown, Lock } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -20,6 +20,7 @@ function MindMapNodeComponent({ id, data, selected }: NodeProps) {
   const d  = data as MindMapNodeData;
   const dd = d as Record<string, unknown>;
   const updateNodeData  = useCanvasStore((s) => s.updateNodeData);
+  const fitNodeToContent = useCanvasStore((s) => s.fitNodeToContent);
   const createChildNode = useCanvasStore((s) => s.createChildNode);
   const pushHistory     = useCanvasStore((s) => s.pushHistory);
 
@@ -40,16 +41,35 @@ function MindMapNodeComponent({ id, data, selected }: NodeProps) {
 
   const [editing, setEditing] = useState(false);
   const [initialContent] = useState(() => dd.richText as string || d.text || "");
+  const editHistoryCaptured = useRef(false);
+  const editDirty = useRef(false);
+
+  const captureTextHistory = useCallback(() => {
+    if (!editHistoryCaptured.current) {
+      pushHistory();
+      editHistoryCaptured.current = true;
+    }
+    editDirty.current = true;
+  }, [pushHistory]);
 
   const startEditing = () => {
     if (d.locked || isDrawing) return;
     useCanvasStore.setState((s) => ({
       nodes: s.nodes.map((n) => n.id === id ? { ...n, style: { ...(n.style ?? {}), height: undefined } } : n),
     }));
+    editHistoryCaptured.current = false;
+    editDirty.current = false;
     setEditing(true);
   };
 
-  const commitEdit = useCallback(() => { pushHistory(); setEditing(false); }, [pushHistory]);
+  const commitEdit = useCallback(() => {
+    if (editDirty.current) {
+      pushHistory();
+      editDirty.current = false;
+    }
+    editHistoryCaptured.current = false;
+    setEditing(false);
+  }, [pushHistory]);
 
   useEffect(() => {
     if (!selected && editing) {
@@ -111,9 +131,11 @@ function MindMapNodeComponent({ id, data, selected }: NodeProps) {
             placeholder="Double-click to edit…"
             blockAlign={dd.textAlign as "left" | "center" | "right" | "justify" | undefined}
             onChange={(html) => {
+              captureTextHistory();
               const plain = html.replace(/<[^>]+>/g, "").trim();
               updateNodeData(id, { richText: html, text: plain });
             }}
+            onContentSizeChange={(size) => fitNodeToContent(id, size)}
             onBlur={commitEdit}
           />
         </div>

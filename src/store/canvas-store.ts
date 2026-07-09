@@ -25,6 +25,8 @@ interface HistoryEntry {
   edges: Edge[];
 }
 
+type ContentSize = { width: number; height: number };
+
 interface CanvasState {
   board: VidyaBoard | null;
   nodes: Node[];
@@ -61,6 +63,7 @@ interface CanvasState {
   createChildNode: (parentId: string) => void;
   createSiblingNode: (nodeId: string) => void;
   updateNodeData: (nodeId: string, data: Record<string, unknown>) => void;
+  fitNodeToContent: (nodeId: string, contentSize: ContentSize) => void;
   convertNode: (nodeId: string, newType: string, extraData?: Record<string, unknown>) => void;
   updateBoardTitle: (title: string) => void;
   performSearch: (query: string) => void;
@@ -209,6 +212,24 @@ function clampValue(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
 }
 
+function numericDimension(value: unknown, fallback: number): number {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const parsed = Number.parseFloat(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return fallback;
+}
+
+function styleSizeOf(node: Node): { w: number; h: number } {
+  const fallback = sizeOf(node);
+  const style = node.style as Record<string, unknown> | undefined;
+  return {
+    w: numericDimension(style?.width, fallback.w),
+    h: numericDimension(style?.height, fallback.h),
+  };
+}
+
 function stripHtmlToLines(value: string): string[] {
   return value
     .replace(/<br\s*\/?>/gi, "\n")
@@ -272,13 +293,13 @@ function wrappedLineCount(lines: string[], maxChars: number): number {
   return Math.max(1, count);
 }
 
-function contentFitSize(node: Node): { width: number; height: number } | null {
+function contentFitSize(node: Node, measuredContent?: ContentSize): { width: number; height: number } | null {
   if (!node.type || !AUTOFIT_NODE_TYPES.has(node.type)) return null;
   const data = node.data as Record<string, unknown>;
   const lines = nodeTextLines(data);
-  if (!lines.length) return null;
+  if (!lines.length && !measuredContent) return null;
 
-  const { w: currentWidth, h: currentHeight } = sizeOf(node);
+  const { w: currentWidth, h: currentHeight } = styleSizeOf(node);
   const baseFontSize = typeof data.fontSize === "number" ? data.fontSize : 14;
   const fontSize = clampValue(Math.max(baseFontSize, maxInlineFontSize(data) ?? 0), 10, 96);
   const charWidth = Math.max(6, fontSize * 0.58);
@@ -289,7 +310,7 @@ function contentFitSize(node: Node): { width: number; height: number } | null {
 
   const minWidth = node.type === "text" ? 160 : node.type === "sticky" ? 180 : 140;
   const minHeight = node.type === "sticky" ? 90 : node.type === "shape" ? 70 : 48;
-  const maxWidth = node.type === "text" ? 680 : 560;
+  const maxWidth = node.type === "text" ? 760 : node.type === "sticky" ? 620 : 680;
   const padX = node.type === "sticky" ? 36 : 44;
   const padY = node.type === "sticky" ? 34 : 30;
   const preferredChars = clampValue(
@@ -303,6 +324,16 @@ function contentFitSize(node: Node): { width: number; height: number } | null {
 
   let targetWidth = Math.max(currentWidth, width);
   let targetHeight = Math.max(currentHeight, Math.max(minHeight, height));
+  if (measuredContent) {
+    const measuredWidth = Number.isFinite(measuredContent.width) ? measuredContent.width : 0;
+    const measuredHeight = Number.isFinite(measuredContent.height) ? measuredContent.height : 0;
+    if (measuredWidth > 0) {
+      targetWidth = Math.max(targetWidth, Math.min(maxWidth, Math.ceil(measuredWidth + padX)));
+    }
+    if (measuredHeight > 0) {
+      targetHeight = Math.max(targetHeight, Math.ceil(measuredHeight + padY));
+    }
+  }
   const shapeType = (data.shapeType as string | undefined) ?? "";
   if (shapeType === "circle" || shapeType === "star") {
     const size = Math.max(targetWidth, targetHeight);
@@ -319,7 +350,7 @@ function contentFitSize(node: Node): { width: number; height: number } | null {
 }
 
 function nodeRectWithSize(node: Node, position = node.position) {
-  const { w, h } = sizeOf(node);
+  const { w, h } = styleSizeOf(node);
   return { id: node.id, x: position.x, y: position.y, width: w, height: h };
 }
 
@@ -334,7 +365,7 @@ function findFreeResizedPosition(node: Node, nodes: Node[]) {
 
   if (isFree(node.position)) return node.position;
 
-  const { w, h } = sizeOf(node);
+  const { w, h } = styleSizeOf(node);
   const stepX = Math.max(w + padding * 2, 140);
   const stepY = Math.max(h + padding * 2, 120);
   const base = node.position;
@@ -365,8 +396,8 @@ function patchNeedsContentFit(patch: Record<string, unknown>): boolean {
   return Object.keys(patch).some((key) => AUTOFIT_FIELDS.has(key));
 }
 
-function fitNodeAfterContentChange(node: Node, nodes: Node[]): Node {
-  const fit = contentFitSize(node);
+function fitNodeAfterContentChange(node: Node, nodes: Node[], measuredContent?: ContentSize): Node {
+  const fit = contentFitSize(node, measuredContent);
   if (!fit) return node;
   const resized = {
     ...node,
@@ -854,6 +885,31 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       }
 
       return { nodes, saveStatus: "unsaved" };
+    });
+  },
+
+  fitNodeToContent: (nodeId, contentSize) => {
+    set((state) => {
+      const node = state.nodes.find((n) => n.id === nodeId);
+      if (!node) return {};
+
+      const fitted = fitNodeAfterContentChange(node, state.nodes, contentSize);
+      if (fitted === node) return {};
+
+      const prevStyle = (node.style ?? {}) as Record<string, unknown>;
+      const nextStyle = (fitted.style ?? {}) as Record<string, unknown>;
+      const geometryChanged =
+        node.position.x !== fitted.position.x ||
+        node.position.y !== fitted.position.y ||
+        prevStyle.width !== nextStyle.width ||
+        prevStyle.height !== nextStyle.height;
+
+      if (!geometryChanged) return {};
+
+      return {
+        nodes: state.nodes.map((n) => (n.id === nodeId ? fitted : n)),
+        saveStatus: "unsaved" as SaveStatus,
+      };
     });
   },
 

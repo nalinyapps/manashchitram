@@ -238,6 +238,40 @@ function LayoutBtn() {
   );
 }
 
+function TouchMultiSelectBtn() {
+  const device = useDeviceProfile();
+  const active = useUIStore((s) => s.touchSelectionMode);
+  const setTouchSelectionMode = useUIStore((s) => s.setTouchSelectionMode);
+  const setActiveTool = useUIStore((s) => s.setActiveTool);
+  const tooltipSide = device.kind === "phone" ? "top" : "right";
+
+  if (!device.isTouch) return null;
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          onClick={() => {
+            setActiveTool("select");
+            setTouchSelectionMode(!active);
+          }}
+          className={cn(
+            "flex h-9 w-9 items-center justify-center rounded-lg transition-all duration-100",
+            active
+              ? "bg-primary text-primary-foreground shadow-sm"
+              : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+          )}
+          aria-label="Multi-select"
+          aria-pressed={active}
+        >
+          <MousePointer2 className="h-[18px] w-[18px] stroke-[1.5]" />
+        </button>
+      </TooltipTrigger>
+      <TooltipContent side={tooltipSide} className="text-xs">Multi-select drag</TooltipContent>
+    </Tooltip>
+  );
+}
+
 /* ── Main toolbar ── */
 export function CanvasToolbar() {
   const { setActiveTool } = useUIStore();
@@ -248,6 +282,7 @@ export function CanvasToolbar() {
         {/* Navigation */}
         <ToolBtn tool="select" icon={<MousePointer2 className="h-[18px] w-[18px] stroke-[1.5]" />} label="Select" shortcut="V" />
         <ToolBtn tool="pan"    icon={<Hand className="h-[18px] w-[18px] stroke-[1.5]" />}          label="Hand / Pan" shortcut="H" />
+        <TouchMultiSelectBtn />
 
         <Divider />
 

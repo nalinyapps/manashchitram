@@ -10,6 +10,8 @@ export type ShapeVariant = "rectangle" | "rounded" | "circle" | "triangle" | "di
 interface UIState {
   activeTool: CanvasTool;
   setActiveTool: (tool: CanvasTool) => void;
+  touchSelectionMode: boolean;
+  setTouchSelectionMode: (active: boolean) => void;
   shapeVariant: ShapeVariant;
   setShapeVariant: (v: ShapeVariant) => void;
   /** ID of the node currently in free-draw internal-fill mode, or null */
@@ -40,7 +42,15 @@ interface UIState {
 
 export const useUIStore = create<UIState>((set, get) => ({
   activeTool: "select",
-  setActiveTool: (tool) => set({ activeTool: tool }),
+  setActiveTool: (tool) => set({
+    activeTool: tool,
+    ...(tool !== "select" ? { touchSelectionMode: false } : {}),
+  }),
+  touchSelectionMode: false,
+  setTouchSelectionMode: (active) => set({
+    touchSelectionMode: active,
+    activeTool: active ? "select" : get().activeTool,
+  }),
   shapeVariant: "rounded",
   setShapeVariant: (v) => set({ shapeVariant: v }),
   drawingModeNodeId: null,

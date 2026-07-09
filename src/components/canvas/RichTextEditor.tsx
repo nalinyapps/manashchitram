@@ -3,7 +3,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { useEditor, EditorContent } from "@tiptap/react";
-import { Extension } from "@tiptap/core";
+import { Extension, type Editor } from "@tiptap/core";
 import StarterKit from "@tiptap/starter-kit";
 import { Color } from "@tiptap/extension-color";
 import { TextStyle } from "@tiptap/extension-text-style";
@@ -64,6 +64,7 @@ interface RichTextEditorProps {
   /** Whole-object alignment from the inspector; applied to ALL paragraphs when it changes */
   blockAlign?: "left" | "center" | "right" | "justify";
   onChange: (html: string) => void;
+  onContentSizeChange?: (size: { width: number; height: number }) => void;
   onBlur?: () => void;
 }
 
@@ -74,9 +75,10 @@ export function RichTextEditor({
   className,
   blockAlign,
   onChange,
+  onContentSizeChange,
   onBlur,
 }: RichTextEditorProps) {
-  const frozenContent = useRef(initialContent);
+  const [frozenContent] = useState(() => initialContent);
   const alignRef = useRef<RichTextEditorProps["blockAlign"]>(blockAlign);
   const alignFirstRun = useRef(true);
   // Anchor = topmost point of the current selection (used to place the bar above it).
@@ -91,8 +93,13 @@ export function RichTextEditor({
   const [showSizes,   setShowSizes]   = useState(false);
   const [mounted, setMounted] = useState(false);
   const customColorRef = useRef<HTMLInputElement>(null);
+  const onContentSizeChangeRef = useRef(onContentSizeChange);
 
-  useEffect(() => { setMounted(true); }, []);
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => setMounted(true));
+    return () => cancelAnimationFrame(frame);
+  }, []);
+  useEffect(() => { onContentSizeChangeRef.current = onContentSizeChange; }, [onContentSizeChange]);
 
   const hideToolbar = useCallback(() => {
     setAnchor(null);
@@ -102,21 +109,46 @@ export function RichTextEditor({
     setShowSizes(false);
   }, []);
 
+  const reportContentSize = useCallback((activeEditor: Editor | null | undefined) => {
+    const element = activeEditor?.view.dom as HTMLElement | undefined;
+    if (!element) return;
+    const rect = element.getBoundingClientRect();
+    const width = element.scrollWidth > element.clientWidth + 2 ? Math.ceil(element.scrollWidth) : 0;
+    const height = Math.ceil(Math.max(element.scrollHeight, rect.height));
+    if (height > 0) onContentSizeChangeRef.current?.({ width, height });
+  }, []);
+
   const editor = useEditor({
     extensions: EXTENSIONS,
-    content: frozenContent.current || "",
+    content: frozenContent || "",
     editable,
     immediatelyRender: false,
-    onUpdate({ editor }) { onChange(editor.getHTML()); },
-    onBlur() { hideToolbar(); onBlur?.(); },
+    onUpdate({ editor }) {
+      onChange(editor.getHTML());
+      requestAnimationFrame(() => reportContentSize(editor));
+    },
+    onBlur({ editor }) {
+      reportContentSize(editor);
+      hideToolbar();
+      onBlur?.();
+    },
   });
 
   useEffect(() => {
     if (!editor) return;
     if (editor.isEditable !== editable) editor.setEditable(editable, false);
-    if (editable) requestAnimationFrame(() => editor.commands.focus("end"));
-    else hideToolbar();
-  }, [editor, editable, hideToolbar]);
+    if (editable) {
+      requestAnimationFrame(() => {
+        editor.commands.focus("end");
+        reportContentSize(editor);
+      });
+    } else {
+      requestAnimationFrame(() => {
+        reportContentSize(editor);
+        hideToolbar();
+      });
+    }
+  }, [editor, editable, hideToolbar, reportContentSize]);
 
   // Whole-object alignment: when the inspector changes blockAlign, apply it to
   // EVERY paragraph so it overrides any per-paragraph alignment. Skip the first
@@ -142,7 +174,14 @@ export function RichTextEditor({
     }
     // Persist the change
     onChange(editor.getHTML());
-  }, [editor, blockAlign, onChange]);
+    requestAnimationFrame(() => reportContentSize(editor));
+  }, [editor, blockAlign, onChange, reportContentSize]);
+
+  useLayoutEffect(() => {
+    if (!editor) return;
+    const frame = requestAnimationFrame(() => reportContentSize(editor));
+    return () => cancelAnimationFrame(frame);
+  }, [editor, editable, reportContentSize]);
 
   const updateToolbar = useCallback(() => {
     if (!editor?.isEditable) { hideToolbar(); return; }
@@ -355,6 +394,7 @@ export function RichTextEditor({
 
       <EditorContent
         editor={editor}
+        aria-label={placeholder}
         className={cn(
           "[&_.ProseMirror]:outline-none [&_.ProseMirror]:min-h-[1rem]",
           "[&_.ProseMirror]:leading-snug [&_.ProseMirror]:break-words",
