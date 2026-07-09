@@ -222,8 +222,20 @@ function numericDimension(value: unknown, fallback: number): number {
   return fallback;
 }
 
+function defaultVisualSize(node: Node): { w: number; h: number } {
+  if (node.type === "sticky") return { w: 180, h: 90 };
+  if (node.type === "text") return { w: 240, h: 56 };
+  if (node.type === "mindmap") return { w: 180, h: 72 };
+  if (node.type === "shape") {
+    const shapeType = ((node.data ?? {}) as Record<string, unknown>).shapeType as string | undefined;
+    if (shapeType === "circle" || shapeType === "star") return { w: 100, h: 100 };
+    return { w: 140, h: 80 };
+  }
+  return { w: 180, h: 80 };
+}
+
 function styleSizeOf(node: Node): { w: number; h: number } {
-  const fallback = sizeOf(node);
+  const fallback = defaultVisualSize(node);
   const style = node.style as Record<string, unknown> | undefined;
   return {
     w: numericDimension(style?.width, fallback.w),

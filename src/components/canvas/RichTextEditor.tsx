@@ -189,6 +189,21 @@ export function RichTextEditor({
     return () => cancelAnimationFrame(frame);
   }, [editor, editable, reportContentSize]);
 
+  useEffect(() => {
+    const element = editor?.view.dom as HTMLElement | undefined;
+    if (!editor || !element || typeof ResizeObserver === "undefined") return;
+    let frame = 0;
+    const observer = new ResizeObserver(() => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => reportContentSize(editor));
+    });
+    observer.observe(element);
+    return () => {
+      cancelAnimationFrame(frame);
+      observer.disconnect();
+    };
+  }, [editor, reportContentSize]);
+
   const updateToolbar = useCallback(() => {
     if (!editor?.isEditable) { hideToolbar(); return; }
     const { state, view } = editor;

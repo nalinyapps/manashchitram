@@ -62,8 +62,8 @@ function dimension(value: unknown, fallback: number): number {
 }
 
 export function sizeOf(node: Node): { w: number; h: number } {
-  const w = dimension(node.measured?.width ?? node.style?.width, DEFAULT_W);
-  const h = dimension(node.measured?.height ?? node.style?.height, DEFAULT_H);
+  const w = dimension(node.style?.width ?? node.measured?.width, DEFAULT_W);
+  const h = dimension(node.style?.height ?? node.measured?.height, DEFAULT_H);
   return { w, h };
 }
 
