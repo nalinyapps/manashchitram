@@ -25,7 +25,17 @@ export type ShapeType =
   | "triangle"
   | "hexagon"
   | "star"
-  | "arrow";
+  | "arrow"
+  | "parallelogram"
+  | "trapezoid"
+  | "document"
+  | "database"
+  | "predefinedProcess"
+  | "delay"
+  | "cloud"
+  | "offPageConnector"
+  | "flower"
+  | "leaf";
 export type CanvasTool =
   | "select"
   | "pan"
@@ -108,6 +118,17 @@ export interface InternalFillRegion {
   createdAt?: string;
 }
 
+export interface ConcentricShapeLayer {
+  id: string;
+  shapeType?: ShapeType;
+  /** Percentage inset from the outer node box. */
+  inset?: number;
+  fillColor?: string;
+  borderColor?: string;
+  borderWidth?: number;
+  borderStyle?: "solid" | "dashed" | "dotted";
+}
+
 export interface BaseNodeData extends Record<string, unknown> {
   label?: string;
   color?: string;
@@ -160,6 +181,8 @@ export interface TextBlockNodeData extends BaseNodeData {
 export interface ShapeNodeData extends BaseNodeData {
   shapeType: ShapeType;
   text?: string;
+  petalCount?: number;
+  concentricLayers?: ConcentricShapeLayer[];
 }
 
 export interface SanskritCardNodeData extends BaseNodeData {

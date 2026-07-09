@@ -181,7 +181,7 @@ function inheritStyle(parentData: Record<string, unknown>): Record<string, unkno
   const keys = [
     "shapeType", "color", "fillColor", "fillOpacity",
     "borderColor", "borderWidth", "borderStyle", "borderRadius",
-    "fontFamily", "fontSize", "textColor", "scriptMode",
+    "fontFamily", "fontSize", "textColor", "scriptMode", "petalCount",
   ];
   const out: Record<string, unknown> = {};
   for (const k of keys) if (parentData[k] !== undefined) out[k] = parentData[k];
@@ -207,7 +207,7 @@ const AUTOFIT_NODE_TYPES = new Set(["shape", "sticky", "text", "mindmap"]);
 const AUTOFIT_FIELDS = new Set([
   "text", "richText", "label", "title", "topic", "devanagari", "iast", "translation",
   "rule", "fontSize", "fontFamily", "fontStyle", "fontWeight", "textAlign",
-  "shapeType", "borderWidth", "borderRadius", "borderStyle",
+  "shapeType", "petalCount", "borderWidth", "borderRadius", "borderStyle",
 ]);
 
 function clampValue(value: number, min: number, max: number): number {
@@ -229,7 +229,13 @@ function defaultVisualSize(node: Node): { w: number; h: number } {
   if (node.type === "mindmap") return { w: 180, h: 72 };
   if (node.type === "shape") {
     const shapeType = ((node.data ?? {}) as Record<string, unknown>).shapeType as string | undefined;
-    if (shapeType === "circle" || shapeType === "star") return { w: 100, h: 100 };
+    if (shapeType === "circle" || shapeType === "diamond" || shapeType === "star" || shapeType === "flower") {
+      return { w: 120, h: 120 };
+    }
+    if (shapeType === "leaf") return { w: 160, h: 96 };
+    if (["document", "database", "predefinedProcess", "delay", "cloud"].includes(shapeType ?? "")) {
+      return { w: 170, h: 96 };
+    }
     return { w: 140, h: 80 };
   }
   return { w: 180, h: 80 };
@@ -290,6 +296,8 @@ function shapeFitFactor(shapeType: string): { width: number; height: number } {
       return { width: 1.42, height: 1.42 };
     case "star":
       return { width: 1.62, height: 1.62 };
+    case "flower":
+      return { width: 1.72, height: 1.72 };
     case "diamond":
       return { width: 1.52, height: 1.52 };
     case "triangle":
@@ -298,6 +306,19 @@ function shapeFitFactor(shapeType: string): { width: number; height: number } {
       return { width: 1.2, height: 1.2 };
     case "arrow":
       return { width: 1.42, height: 1.28 };
+    case "callout":
+    case "offPageConnector":
+      return { width: 1.26, height: 1.36 };
+    case "parallelogram":
+    case "trapezoid":
+      return { width: 1.28, height: 1.18 };
+    case "document":
+    case "database":
+    case "predefinedProcess":
+    case "delay":
+    case "cloud":
+    case "leaf":
+      return { width: 1.22, height: 1.24 };
     case "capsule":
       return { width: 1.1, height: 1.08 };
     default:
@@ -342,9 +363,23 @@ function contentFitSize(node: Node, measuredContent?: ContentSize): { width: num
   if (!node.type || !AUTOFIT_NODE_TYPES.has(node.type)) return null;
   const data = node.data as Record<string, unknown>;
   const lines = nodeTextLines(data);
-  if (!lines.length && !measuredContent) return null;
-
   const { w: currentWidth, h: currentHeight } = styleSizeOf(node);
+  const shapeType = (data.shapeType as string | undefined) ?? "";
+
+  if (!lines.length && !measuredContent) {
+    if (node.type !== "shape") return null;
+    const minimum = defaultVisualSize(node);
+    let targetWidth = Math.max(currentWidth, minimum.w);
+    let targetHeight = Math.max(currentHeight, minimum.h);
+    if (shapeType === "circle" || shapeType === "diamond" || shapeType === "star" || shapeType === "flower") {
+      const size = Math.max(targetWidth, targetHeight);
+      targetWidth = size;
+      targetHeight = size;
+    }
+    if (targetWidth <= currentWidth && targetHeight <= currentHeight) return null;
+    return { width: Math.ceil(targetWidth), height: Math.ceil(targetHeight) };
+  }
+
   const baseFontSize = typeof data.fontSize === "number" ? data.fontSize : 14;
   const fontSize = clampValue(Math.max(baseFontSize, maxInlineFontSize(data) ?? 0), 10, 96);
   const charWidth = Math.max(6, fontSize * 0.58);
@@ -392,13 +427,12 @@ function contentFitSize(node: Node, measuredContent?: ContentSize): { width: num
       targetHeight = Math.max(targetHeight, Math.ceil(measuredHeight + padY));
     }
   }
-  const shapeType = (data.shapeType as string | undefined) ?? "";
   if (node.type === "shape" && shapeType) {
     const factor = shapeFitFactor(shapeType);
     targetWidth = Math.max(targetWidth, Math.ceil(width * factor.width));
     targetHeight = Math.max(targetHeight, Math.ceil(height * factor.height));
   }
-  if (shapeType === "circle" || shapeType === "star") {
+  if (shapeType === "circle" || shapeType === "diamond" || shapeType === "star" || shapeType === "flower") {
     const size = Math.max(targetWidth, targetHeight);
     targetWidth = size;
     targetHeight = size;
@@ -981,7 +1015,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       let width = Math.max(current.w, Math.ceil(bounds.width));
       let height = Math.max(current.h, Math.ceil(bounds.height));
       const shapeType = ((node.data ?? {}) as Record<string, unknown>).shapeType as string | undefined;
-      if (shapeType === "circle" || shapeType === "star") {
+      if (shapeType === "circle" || shapeType === "diamond" || shapeType === "star" || shapeType === "flower") {
         const size = Math.max(width, height);
         width = size;
         height = size;
@@ -1019,7 +1053,8 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     const shapeType = (newData.shapeType as string) ?? "";
     let newStyle = { ...node.style };
     if (shapeType === "diamond")  { newStyle = { ...newStyle, width: Math.max(curW * 1.5, 180), height: Math.max(curH * 1.5, 120) }; }
-    if (shapeType === "circle")   { const s = Math.max(curW, curH, 100); newStyle = { ...newStyle, width: s, height: s }; }
+    if (shapeType === "circle" || shapeType === "flower")   { const s = Math.max(curW, curH, 120); newStyle = { ...newStyle, width: s, height: s }; }
+    if (shapeType === "star")     { const s = Math.max(curW, curH, 120); newStyle = { ...newStyle, width: s, height: s }; }
     if (shapeType === "triangle") { newStyle = { ...newStyle, width: Math.max(curW * 1.3, 160), height: Math.max(curH * 1.3, 100) }; }
     // Ensure a minimum size for shapes
     if (newType === "shape" && !newStyle.height) newStyle = { ...newStyle, height: Math.max(curH, 80) };

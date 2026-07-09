@@ -45,6 +45,17 @@ const MAX_CANVAS_ZOOM = 6;
 const LONG_PRESS_PAN_MS = 180;
 const LONG_PRESS_CANCEL_DISTANCE = 7;
 
+function initialShapeSize(shapeType: string): { width: number; height: number } {
+  if (shapeType === "circle" || shapeType === "diamond" || shapeType === "star" || shapeType === "flower") {
+    return { width: 120, height: 120 };
+  }
+  if (shapeType === "leaf") return { width: 160, height: 96 };
+  if (["document", "database", "predefinedProcess", "delay", "cloud"].includes(shapeType)) {
+    return { width: 170, height: 96 };
+  }
+  return { width: 140, height: 80 };
+}
+
 function calcGuides(
   dragged: { x: number; y: number; w: number; h: number },
   others:  Array<{ x: number; y: number; w: number; h: number }>
@@ -398,9 +409,10 @@ function VidyaCanvasInner({ boardId }: { boardId: string }) {
           break;
         case "shape": {
           const sv = useUIStore.getState().shapeVariant ?? "rounded";
+          const size = initialShapeSize(sv);
           newNode = { id, type: "shape", position,
-            data: { shapeType: sv, text: "", color: "#4262ff", tags: [] },
-            style: { width: sv === "circle" ? 100 : 140, height: sv === "circle" ? 100 : 80 } };
+            data: { shapeType: sv, text: "", color: "#4262ff", tags: [], ...(sv === "flower" && { petalCount: 8 }) },
+            style: size };
           break;
         }
         case "frame":

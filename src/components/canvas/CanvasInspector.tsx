@@ -18,7 +18,7 @@ import {
 import { useCanvasStore } from "@/store/canvas-store";
 import { useUIStore } from "@/store/ui-store";
 import { SANSKRIT_TAG_SUGGESTIONS } from "@/lib/types";
-import type { BorderLayer, InternalFillRegion } from "@/lib/types";
+import type { BorderLayer, ConcentricShapeLayer, InternalFillRegion, ShapeType } from "@/lib/types";
 import type { Node } from "@xyflow/react";
 import { cn } from "@/lib/utils";
 import { ColorSwatchPicker } from "./ColorSwatchPicker";
@@ -33,12 +33,28 @@ const SHAPE_TYPES = [
   { label: "Circle",     value: "circle"    },
   { label: "Diamond",    value: "diamond"   },
   { label: "Capsule",    value: "capsule"   },
+  { label: "Data",       value: "parallelogram" },
+  { label: "Manual",     value: "trapezoid" },
+  { label: "Document",   value: "document" },
+  { label: "Database",   value: "database" },
+  { label: "Predef.",    value: "predefinedProcess" },
+  { label: "Delay",      value: "delay" },
+  { label: "Cloud",      value: "cloud" },
+  { label: "Off-page",   value: "offPageConnector" },
   { label: "Triangle",   value: "triangle"  },
   { label: "Hexagon",    value: "hexagon"   },
   { label: "Star",       value: "star"      },
   { label: "Arrow",      value: "arrow"     },
+  { label: "Flower",     value: "flower"    },
+  { label: "Leaf",       value: "leaf"      },
   { label: "Callout",    value: "callout"   },
 ];
+
+const MAX_CONCENTRIC_LAYERS = 6;
+
+function concentricInset(index: number): number {
+  return Math.min(44, 10 + index * 7);
+}
 
 const CONVERT_TYPES = [
   { label: "Mind-map",  value: "mindmap" },
@@ -153,7 +169,7 @@ function supportsCornerRadius(node: Node): boolean {
   if (["mindmap", "sticky", "text"].includes(nodeType)) return true;
   if (nodeType !== "shape") return false;
   const shapeType = ((node.data as Record<string, unknown>).shapeType as string | undefined) ?? "";
-  return ["rounded", "rectangle", "callout"].includes(shapeType);
+  return ["rounded", "rectangle"].includes(shapeType);
 }
 
 /** Border style selector: Solid | Dashed | Dotted */
@@ -421,6 +437,7 @@ export function CanvasInspector({ compact = false }: { compact?: boolean }) {
   const supportsRadius = isTextNode || (isShapeNode && ["rounded", "rectangle"].includes(shapeType));
   const borderLayers  = (d.borderLayers as BorderLayer[]) ?? [];
   const fillRegions   = (d.internalFillRegions as InternalFillRegion[]) ?? [];
+  const concentricLayers = (d.concentricLayers as ConcentricShapeLayer[]) ?? [];
   const isDrawing     = drawingModeNodeId === selectedNode.id;
   const fontGroups    = groupFontsByCategory(FONT_OPTIONS);
 
@@ -541,13 +558,69 @@ export function CanvasInspector({ compact = false }: { compact?: boolean }) {
                   onClick={() => {
                     // Reset borderRadius so DEFAULT_RADIUS kicks in for the new shape
                     pushHistory();
-                    updateNodeData(selectedNode.id, { shapeType: value, borderRadius: undefined });
+                    updateNodeData(selectedNode.id, {
+                      shapeType: value,
+                      borderRadius: undefined,
+                      ...(value === "flower" && { petalCount: (d.petalCount as number | undefined) ?? 8 }),
+                    });
                   }}
                   className={cn("rounded-lg border px-1 py-1.5 text-[10px] text-center hover:bg-muted",
                     d.shapeType === value ? "border-primary bg-primary/10 text-primary font-medium" : "border-border")}>
                   {label}
                 </button>
               ))}
+            </div>
+            {shapeType === "flower" && (
+              <div>
+                <p className="mb-1 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Petals</p>
+                <SliderControl
+                  value={typeof d.petalCount === "number" ? d.petalCount : 8}
+                  min={4}
+                  max={16}
+                  step={1}
+                  onChange={(value) => setField("petalCount", value)}
+                />
+              </div>
+            )}
+          </Section>
+        )}
+
+        {isShapeNode && (
+          <Section label="Concentric" defaultOpen={false}>
+            <div className="flex items-center justify-between rounded-lg border border-border px-2 py-1.5">
+              <span className="text-[10px] text-muted-foreground">{concentricLayers.length} inner shapes</span>
+              <div className="flex gap-1">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7 px-2 text-xs"
+                  disabled={concentricLayers.length >= MAX_CONCENTRIC_LAYERS}
+                  onClick={() => {
+                    const nextLayer: ConcentricShapeLayer = {
+                      id: generateId(),
+                      shapeType: ((shapeType || "rounded") as ShapeType),
+                      inset: concentricInset(concentricLayers.length),
+                      fillColor: "transparent",
+                      borderColor: (d.borderColor as string) ?? (d.color as string) ?? "#4262ff",
+                      borderWidth: borderWidth || 2,
+                      borderStyle: (d.borderStyle as ConcentricShapeLayer["borderStyle"]) ?? "solid",
+                    };
+                    setField("concentricLayers", [...concentricLayers, nextLayer]);
+                  }}
+                >
+                  <Plus className="mr-1 h-3 w-3" /> Add
+                </Button>
+                {concentricLayers.length > 0 && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 px-2 text-xs text-destructive hover:bg-destructive/10"
+                    onClick={() => setField("concentricLayers", concentricLayers.slice(0, -1))}
+                  >
+                    <Minus className="mr-1 h-3 w-3" /> Last
+                  </Button>
+                )}
+              </div>
             </div>
           </Section>
         )}
