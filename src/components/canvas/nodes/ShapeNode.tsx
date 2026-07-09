@@ -15,6 +15,9 @@ import type {
   InternalFillRegion,
   BorderLayer,
   ConcentricShapeLayer,
+  RadialChartData,
+  RadialChartRing,
+  RadialChartSegment,
   ShapeType,
 } from "@/lib/types";
 import { useCanvasStore } from "@/store/canvas-store";
@@ -65,7 +68,7 @@ const CUSTOM_SVG_SHAPES = new Set([
 ]);
 
 const SQUARE_ASPECT_SHAPES = new Set(["circle", "diamond", "star", "flower"]);
-const MAX_CONCENTRIC_LAYERS = 6;
+const CONCENTRIC_INSET_STEP = 6;
 
 function dashArray(style: string, w: number): string | undefined {
   if (style === "dashed") return `${w * 2.5} ${w * 1.5}`;
@@ -77,8 +80,9 @@ function isSvgShape(shapeType: string): boolean {
   return shapeType in POLYGON_POINTS || CUSTOM_SVG_SHAPES.has(shapeType);
 }
 
-function concentricInset(index: number): number {
-  return Math.min(44, 10 + index * 7);
+function concentricInset(index: number, total: number): number {
+  const step = Math.min(CONCENTRIC_INSET_STEP, 48 / Math.max(1, total + 1));
+  return step * (index + 1);
 }
 
 function normalizePetalCount(value: unknown): number {
@@ -87,12 +91,254 @@ function normalizePetalCount(value: unknown): number {
 
 function layerFillColor(layer: ConcentricShapeLayer): string | undefined {
   if (!layer.fillColor || layer.fillColor === "transparent") return "transparent";
-  return colorWithOpacity(layer.fillColor, 0.16);
+  return colorWithOpacity(layer.fillColor, layer.fillOpacity ?? 0.16);
 }
 
 function selectedShapeStroke(shapeType: string, path: ReactNode, selected?: boolean) {
   if (!selected || shapeType === "flower") return null;
   return path;
+}
+
+function polarPoint(cx: number, cy: number, radius: number, angleDeg: number) {
+  const angle = (angleDeg - 90) * Math.PI / 180;
+  return {
+    x: cx + radius * Math.cos(angle),
+    y: cy + radius * Math.sin(angle),
+  };
+}
+
+function annularSectorPath(innerRadius: number, outerRadius: number, startAngle: number, endAngle: number): string {
+  const largeArc = endAngle - startAngle > 180 ? 1 : 0;
+  const outerStart = polarPoint(50, 50, outerRadius, startAngle);
+  const outerEnd = polarPoint(50, 50, outerRadius, endAngle);
+  const innerEnd = polarPoint(50, 50, innerRadius, endAngle);
+  const innerStart = polarPoint(50, 50, innerRadius, startAngle);
+
+  if (innerRadius <= 0) {
+    return [
+      `M 50 50`,
+      `L ${outerStart.x} ${outerStart.y}`,
+      `A ${outerRadius} ${outerRadius} 0 ${largeArc} 1 ${outerEnd.x} ${outerEnd.y}`,
+      "Z",
+    ].join(" ");
+  }
+
+  return [
+    `M ${outerStart.x} ${outerStart.y}`,
+    `A ${outerRadius} ${outerRadius} 0 ${largeArc} 1 ${outerEnd.x} ${outerEnd.y}`,
+    `L ${innerEnd.x} ${innerEnd.y}`,
+    `A ${innerRadius} ${innerRadius} 0 ${largeArc} 0 ${innerStart.x} ${innerStart.y}`,
+    "Z",
+  ].join(" ");
+}
+
+function wrapTextLines(text: string | undefined, maxChars: number, maxLines = 3): string[] {
+  if (!text?.trim()) return [];
+  const explicit = text.split(/\n/).map((line) => line.trim()).filter(Boolean);
+  if (explicit.length > 1) return explicit.slice(0, maxLines);
+  const words = text.trim().split(/\s+/);
+  if (words.length <= 2 && text.trim().length <= maxChars) return [text.trim()];
+  const lines: string[] = [];
+  let current = "";
+  for (const word of words) {
+    const next = current ? `${current} ${word}` : word;
+    if (next.length > maxChars && current) {
+      lines.push(current);
+      current = word;
+    } else {
+      current = next;
+    }
+    if (lines.length === maxLines - 1) break;
+  }
+  if (current && lines.length < maxLines) lines.push(current);
+  return lines;
+}
+
+function splitTextLines(text: string | undefined, maxLines = 3): string[] {
+  return wrapTextLines(text, 14, maxLines);
+}
+
+function fitSegmentText(
+  text: string | undefined,
+  arcLength: number,
+  radialBand: number,
+  preferredFontSize?: number
+): { lines: string[]; fontSize: number } {
+  const preferred = preferredFontSize ?? Math.max(2.8, Math.min(7.8, radialBand * 0.34));
+  const maxLines = Math.max(1, Math.min(4, Math.floor((radialBand * 0.9) / Math.max(2.4, preferred * 0.92))));
+  const charsPerLine = Math.max(2, Math.floor((arcLength * 0.82) / Math.max(1.4, preferred * 0.55)));
+  const lines = wrapTextLines(text, charsPerLine, maxLines);
+  const longest = Math.max(1, ...lines.map((line) => line.length));
+  const widthFit = (arcLength * 0.9) / (longest * 0.58);
+  const heightFit = (radialBand * 0.82) / (Math.max(1, lines.length) * 1.12);
+  return {
+    lines,
+    fontSize: Math.max(2.2, Math.min(preferred, widthFit, heightFit)),
+  };
+}
+
+function chartRingSegments(ring: RadialChartRing): RadialChartSegment[] {
+  const count = Math.max(1, Math.min(72, Math.round(ring.segmentCount || 1)));
+  const segments = ring.segments ?? [];
+  return Array.from({ length: count }, (_, index) => segments[index] ?? { id: `segment-${index + 1}` });
+}
+
+type ChartTextEdit =
+  | { kind: "segment"; ringIndex: number; segmentIndex: number; x: number; y: number; width: number; rotation: number; value: string }
+  | { kind: "center"; x: number; y: number; width: number; rotation: number; value: string };
+
+function updateRadialSegmentText(chart: RadialChartData, ringIndex: number, segmentIndex: number, text: string): RadialChartData {
+  const rings = chart.rings ?? [];
+  return {
+    ...chart,
+    rings: rings.map((ring, idx) => {
+      if (idx !== ringIndex) return ring;
+      const segments = chartRingSegments(ring).map((segment, sIdx) =>
+        sIdx === segmentIndex ? { ...segment, text } : segment
+      );
+      return { ...ring, segments };
+    }),
+  };
+}
+
+function RadialChartLayer({
+  chart,
+  borderColor,
+  editingText,
+  onSegmentEdit,
+  onCenterEdit,
+}: {
+  chart?: RadialChartData;
+  borderColor: string;
+  editingText?: ChartTextEdit | null;
+  onSegmentEdit?: (edit: ChartTextEdit & { kind: "segment" }) => void;
+  onCenterEdit?: (edit: ChartTextEdit & { kind: "center" }) => void;
+}) {
+  if (!chart?.enabled) return null;
+  const rings = chart.rings?.length ? chart.rings : [{ id: "ring-1", segmentCount: 6 }];
+  const centerRadius = Math.max(0, Math.min(42, chart.centerRadius ?? 14));
+  const outerRadius = 49;
+  const ringThickness = rings.length ? (outerRadius - centerRadius) / rings.length : 0;
+  const rotation = chart.rotation ?? 0;
+  const segmentBorderColor = chart.segmentBorderColor ?? borderColor;
+  const segmentBorderWidth = Math.max(0, chart.segmentBorderWidth ?? 0.6);
+
+  return (
+    <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="pointer-events-none absolute inset-0 z-[2] h-full w-full">
+      {rings.map((ring, ringIndex) => {
+        const innerRadius = centerRadius + ringThickness * ringIndex;
+        const segmentOuterRadius = centerRadius + ringThickness * (ringIndex + 1);
+        const segments = chartRingSegments(ring);
+        return segments.map((segment, segmentIndex) => {
+          const start = rotation + (360 / segments.length) * segmentIndex;
+          const end = rotation + (360 / segments.length) * (segmentIndex + 1);
+          const mid = (start + end) / 2;
+          const textRadius = (innerRadius + segmentOuterRadius) / 2;
+          const textPoint = polarPoint(50, 50, textRadius, mid);
+          const textRotation = ((mid + 90) % 360 + 360) % 360;
+          const adjustedTextRotation = textRotation > 90 && textRotation < 270 ? textRotation + 180 : textRotation;
+          const angleWidth = 360 / segments.length;
+          const arcLength = (2 * Math.PI * textRadius * angleWidth) / 360;
+          const { lines, fontSize } = fitSegmentText(segment.text, arcLength, ringThickness, segment.fontSize);
+          const isEditingSegment =
+            editingText?.kind === "segment" &&
+            editingText.ringIndex === ringIndex &&
+            editingText.segmentIndex === segmentIndex;
+          return (
+            <g key={`${ring.id}-${segment.id}-${segmentIndex}`}>
+              <path
+                d={annularSectorPath(innerRadius, segmentOuterRadius, start, end)}
+                className="nodrag nopan cursor-text"
+                fill={segment.fillColor ?? (ringIndex % 2 ? "rgba(255,255,255,0.28)" : "rgba(255,255,255,0.12)")}
+                stroke={segmentBorderWidth > 0 ? segmentBorderColor : "none"}
+                strokeWidth={segmentBorderWidth}
+                vectorEffect="non-scaling-stroke"
+                pointerEvents="auto"
+                onPointerDown={(event) => event.stopPropagation()}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onSegmentEdit?.({
+                    kind: "segment",
+                    ringIndex,
+                    segmentIndex,
+                    x: textPoint.x,
+                    y: textPoint.y,
+                    width: Math.max(64, Math.min(220, arcLength * 2.5)),
+                    rotation: adjustedTextRotation,
+                    value: segment.text ?? "",
+                  });
+                }}
+              />
+              {lines.length > 0 && !isEditingSegment && (
+                <text
+                  x={textPoint.x}
+                  y={textPoint.y}
+                  pointerEvents="none"
+                  textAnchor="middle"
+                  dominantBaseline="middle"
+                  fill={segment.textColor ?? "#111827"}
+                  fontSize={fontSize}
+                  fontWeight={ringIndex === 0 ? 700 : 500}
+                  transform={`rotate(${adjustedTextRotation} ${textPoint.x} ${textPoint.y})`}
+                >
+                  {lines.map((line, lineIndex) => (
+                    <tspan key={lineIndex} x={textPoint.x} dy={lineIndex === 0 ? 0 : fontSize * 1.12}>
+                      {line}
+                    </tspan>
+                  ))}
+                </text>
+              )}
+            </g>
+          );
+        });
+      })}
+      {centerRadius > 0 && (
+        <>
+          <circle
+            cx="50"
+            cy="50"
+            r={centerRadius}
+            className="nodrag nopan cursor-text"
+            fill={chart.centerColor ?? "rgba(255,255,255,0.9)"}
+            stroke={segmentBorderWidth > 0 ? segmentBorderColor : borderColor}
+            strokeWidth={Math.max(0.45, segmentBorderWidth)}
+            vectorEffect="non-scaling-stroke"
+            pointerEvents="auto"
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={(event) => {
+              event.stopPropagation();
+              onCenterEdit?.({
+                kind: "center",
+                x: 50,
+                y: 50,
+                width: Math.max(72, centerRadius * 4.5),
+                rotation: 0,
+                value: chart.centerText ?? "",
+              });
+            }}
+          />
+          {chart.centerText && editingText?.kind !== "center" && (
+            <text
+              x="50"
+              y="50"
+              pointerEvents="none"
+              textAnchor="middle"
+              dominantBaseline="middle"
+              fill={chart.centerTextColor ?? "#111827"}
+              fontSize={Math.max(3, centerRadius * 0.32)}
+              fontWeight="700"
+            >
+              {splitTextLines(chart.centerText, 2).map((line, lineIndex) => (
+                <tspan key={lineIndex} x="50" dy={lineIndex === 0 ? 0 : Math.max(3, centerRadius * 0.34)}>
+                  {line}
+                </tspan>
+              ))}
+            </text>
+          )}
+        </>
+      )}
+    </svg>
+  );
 }
 
 function SvgShapeSurface({
@@ -288,12 +534,15 @@ function ShapeNodeComponent({ id, data, selected }: NodeProps) {
   const fillOpacity  = resolveFillOpacity(dd);
   const fillRegions  = (dd.internalFillRegions as InternalFillRegion[]) ?? [];
   const petalCount   = normalizePetalCount(d.petalCount);
+  const radialChart  = d.radialChart;
+  const rotation     = typeof dd.rotation === "number" ? dd.rotation : 0;
   const concentricLayers = useMemo(
     () => (d.concentricLayers ?? []) as ConcentricShapeLayer[],
     [d.concentricLayers]
   );
 
   const [editing, setEditing] = useState(false);
+  const [chartTextEdit, setChartTextEdit] = useState<ChartTextEdit | null>(null);
   const [initialContent] = useState(() => dd.richText as string || (d.text as string) || "");
   const editHistoryCaptured = useRef(false);
   const editDirty = useRef(false);
@@ -329,21 +578,39 @@ function ShapeNodeComponent({ id, data, selected }: NodeProps) {
   const shapeStyle: CSSProperties = CLIP_PATHS[shapeType]
     ? { clipPath: CLIP_PATHS[shapeType] }
     : { borderRadius: bRadius };
+  const activeChartTextEdit = selected && radialChart?.enabled ? chartTextEdit : null;
+  const visualRotationStyle: CSSProperties = {
+    transform: rotation ? `rotate(${rotation}deg)` : undefined,
+    transformOrigin: "center",
+  };
 
   const addConcentricLayer = useCallback(() => {
-    if (concentricLayers.length >= MAX_CONCENTRIC_LAYERS) return;
     pushHistory();
     const nextLayer: ConcentricShapeLayer = {
       id: generateId(),
       shapeType: shapeType as ShapeType,
-      inset: concentricInset(concentricLayers.length),
       fillColor: "transparent",
       borderColor,
       borderWidth: Math.max(1, bWidth),
       borderStyle: (bStyle as ConcentricShapeLayer["borderStyle"]) ?? "solid",
+      text: "",
+      textColor: (dd.textColor as string | undefined) ?? "#111827",
+      fontSize: typeof dd.fontSize === "number" ? dd.fontSize : 14,
     };
     updateNodeData(id, { concentricLayers: [...concentricLayers, nextLayer] });
-  }, [bStyle, bWidth, borderColor, concentricLayers, id, pushHistory, shapeType, updateNodeData]);
+  }, [bStyle, bWidth, borderColor, concentricLayers, dd.fontSize, dd.textColor, id, pushHistory, shapeType, updateNodeData]);
+
+  const updateChartEditText = useCallback((value: string) => {
+    if (!activeChartTextEdit) return;
+    const latest = useCanvasStore.getState().nodes.find((node) => node.id === id)?.data as ShapeNodeData | undefined;
+    const chart = latest?.radialChart ?? radialChart;
+    if (!chart) return;
+    const nextChart = activeChartTextEdit.kind === "center"
+      ? { ...chart, centerText: value }
+      : updateRadialSegmentText(chart, activeChartTextEdit.ringIndex, activeChartTextEdit.segmentIndex, value);
+    setChartTextEdit({ ...activeChartTextEdit, value } as ChartTextEdit);
+    updateNodeData(id, { radialChart: nextChart });
+  }, [activeChartTextEdit, id, radialChart, updateNodeData]);
 
   return (
     <>
@@ -354,7 +621,7 @@ function ShapeNodeComponent({ id, data, selected }: NodeProps) {
         ref={boxRef}
         className="group relative flex h-full w-full items-center justify-center"
         onDoubleClick={() => {
-          if (isDrawing) return;
+          if (isDrawing || radialChart?.enabled) return;
           editHistoryCaptured.current = false;
           editDirty.current = false;
           setEditing(true);
@@ -376,47 +643,146 @@ function ShapeNodeComponent({ id, data, selected }: NodeProps) {
             <Plus className="h-3.5 w-3.5 text-white" />
           </button>
         )}
-        {!svgShape && <BorderLayers layers={borderLayers} primaryWidth={bWidth} baseRadius={bRadius} />}
+        <div className="absolute inset-0" style={visualRotationStyle}>
+          {!svgShape && <BorderLayers layers={borderLayers} primaryWidth={bWidth} baseRadius={bRadius} />}
 
-        <ShapeSurface
-          shapeType={shapeType}
-          fillColor={fillColor}
-          borderColor={borderColor}
-          borderWidth={bWidth}
-          borderStyle={bStyle}
-          borderRadius={bRadius}
-          selected={selected}
-          petalCount={petalCount}
-        />
+          <ShapeSurface
+            shapeType={shapeType}
+            fillColor={fillColor}
+            borderColor={borderColor}
+            borderWidth={bWidth}
+            borderStyle={bStyle}
+            borderRadius={bRadius}
+            selected={selected}
+            petalCount={petalCount}
+          />
 
-        {concentricLayers.map((layer, index) => {
-          const inset = layer.inset ?? concentricInset(index);
-          const innerShape = layer.shapeType ?? (shapeType as ShapeType);
-          return (
-            <div
-              key={layer.id}
-              className="pointer-events-none absolute"
-              style={{ inset: `${inset}%` }}
-            >
-              <ShapeSurface
-                shapeType={innerShape}
-                fillColor={layerFillColor(layer)}
-                borderColor={layer.borderColor ?? borderColor}
-                borderWidth={layer.borderWidth ?? Math.max(1, bWidth)}
-                borderStyle={layer.borderStyle ?? bStyle}
-                borderRadius={Math.max(0, bRadius - inset)}
-                petalCount={petalCount}
-              />
+          {/* Internal fill regions — clipped inside shape */}
+          <div className="absolute inset-0 overflow-hidden" style={shapeStyle}>
+            <InternalFillLayer
+              regions={fillRegions}
+              isDrawingMode={isDrawing}
+              drawingColor={drawingRegionColor}
+              drawingOpacity={drawingRegionOpacity}
+              fillOpacity={fillOpacity}
+              interactive={selected && !isDrawing}
+              onRegionAdded={(r) => updateNodeData(id, { internalFillRegions: [...fillRegions, r] })}
+              onRegionUpdated={(rid, patch) => updateNodeData(id, {
+                internalFillRegions: fillRegions.map((x) => x.id === rid ? { ...x, ...patch } : x),
+              })}
+            />
+          </div>
+
+            <RadialChartLayer
+            chart={radialChart}
+            borderColor={borderColor}
+            editingText={activeChartTextEdit}
+            onSegmentEdit={(edit) => {
+              editHistoryCaptured.current = false;
+              editDirty.current = false;
+              pushHistory();
+              setEditing(false);
+              setChartTextEdit(edit);
+            }}
+            onCenterEdit={(edit) => {
+              editHistoryCaptured.current = false;
+              editDirty.current = false;
+              pushHistory();
+              setEditing(false);
+              setChartTextEdit(edit);
+            }}
+          />
+
+          {activeChartTextEdit && (
+            <input
+              autoFocus
+              aria-label={activeChartTextEdit.kind === "center" ? "Edit chart center text" : "Edit chart segment text"}
+              name={activeChartTextEdit.kind === "center" ? "radial-chart-inline-center" : "radial-chart-inline-segment"}
+              className="nodrag nopan absolute z-[40] rounded-md border border-primary bg-background/95 px-2 py-1 text-center text-xs font-medium shadow-lg outline-none ring-2 ring-primary/20"
+              value={activeChartTextEdit.value}
+              style={{
+                left: `${activeChartTextEdit.x}%`,
+                top: `${activeChartTextEdit.y}%`,
+                width: activeChartTextEdit.width,
+                transform: `translate(-50%, -50%) rotate(${activeChartTextEdit.rotation}deg)`,
+                transformOrigin: "center",
+              }}
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={(event) => event.stopPropagation()}
+              onChange={(event) => updateChartEditText(event.target.value)}
+              onBlur={() => setChartTextEdit(null)}
+              onKeyDown={(event) => {
+                event.stopPropagation();
+                if (event.key === "Enter" || event.key === "Escape") {
+                  event.currentTarget.blur();
+                }
+              }}
+            />
+          )}
+
+          {concentricLayers.map((layer, index) => {
+            const inset = concentricInset(index, concentricLayers.length);
+            const innerShape = layer.shapeType ?? (shapeType as ShapeType);
+            return (
+              <div
+                key={layer.id}
+                className="pointer-events-none absolute"
+                style={{ inset: `${inset}%` }}
+              >
+                <ShapeSurface
+                  shapeType={innerShape}
+                  fillColor={layerFillColor(layer)}
+                  borderColor={layer.borderColor ?? borderColor}
+                  borderWidth={layer.borderWidth ?? Math.max(1, bWidth)}
+                  borderStyle={layer.borderStyle ?? bStyle}
+                  borderRadius={Math.max(0, bRadius - inset)}
+                  petalCount={petalCount}
+                />
+                {layer.text && (
+                  <div
+                    className="absolute inset-x-[12%] top-[8%] z-10 truncate text-center font-medium"
+                    style={{
+                      color: layer.textColor ?? "#111827",
+                      fontSize: layer.fontSize ? `${layer.fontSize}px` : undefined,
+                    }}
+                  >
+                    {layer.text}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+
+          {!radialChart?.enabled && (
+            <div className={cn(
+              "nodrag nopan relative z-10 flex h-full w-full items-center justify-center px-3 text-center text-sm font-medium text-foreground",
+              editing && "cursor-text"
+            )}>
+              <div ref={contentRef} className="w-full" style={getTextStyle(dd)}>
+                <RichTextEditor
+                  initialContent={initialContent}
+                  editable={editing}
+                  placeholder="Double-click…"
+                  className="[&_.ProseMirror]:text-center"
+                  blockAlign={dd.textAlign as "left" | "center" | "right" | "justify" | undefined}
+                  onChange={(html) => {
+                    captureTextHistory();
+                    const plain = html.replace(/<[^>]+>/g, "").trim();
+                    updateNodeData(id, { richText: html, text: plain });
+                  }}
+                  onContentSizeChange={(size) => fitNodeToContent(id, size)}
+                  onBlur={finishEditing}
+                />
+              </div>
             </div>
-          );
-        })}
+          )}
+        </div>
 
         {selected && !editing && !isDrawing && (
           <button
             className="nodrag nopan absolute -left-3.5 -bottom-3.5 z-30 flex h-7 w-7 items-center justify-center rounded-full border-2 border-background shadow-md transition-transform hover:scale-110 disabled:cursor-not-allowed disabled:opacity-50"
             style={{ backgroundColor: borderColor }}
             title="Add concentric inner shape"
-            disabled={concentricLayers.length >= MAX_CONCENTRIC_LAYERS}
             onPointerDown={(event) => event.stopPropagation()}
             onClick={(event) => {
               event.stopPropagation();
@@ -426,45 +792,6 @@ function ShapeNodeComponent({ id, data, selected }: NodeProps) {
             <Layers2 className="h-3.5 w-3.5 text-white" />
           </button>
         )}
-
-        {/* Internal fill regions — clipped inside shape */}
-        <div className="absolute inset-0 overflow-hidden" style={shapeStyle}>
-          <InternalFillLayer
-            regions={fillRegions}
-            isDrawingMode={isDrawing}
-            drawingColor={drawingRegionColor}
-            drawingOpacity={drawingRegionOpacity}
-            fillOpacity={fillOpacity}
-            interactive={selected && !isDrawing}
-            onRegionAdded={(r) => updateNodeData(id, { internalFillRegions: [...fillRegions, r] })}
-            onRegionUpdated={(rid, patch) => updateNodeData(id, {
-              internalFillRegions: fillRegions.map((x) => x.id === rid ? { ...x, ...patch } : x),
-            })}
-          />
-        </div>
-
-        {/* Text */}
-        <div className={cn(
-          "nodrag nopan relative z-10 w-full px-3 text-center text-sm font-medium text-foreground",
-          editing && "cursor-text"
-        )}
-          ref={contentRef}
-          style={getTextStyle(dd)}>
-          <RichTextEditor
-            initialContent={initialContent}
-            editable={editing}
-            placeholder="Double-click…"
-            className="[&_.ProseMirror]:text-center"
-            blockAlign={dd.textAlign as "left" | "center" | "right" | "justify" | undefined}
-            onChange={(html) => {
-              captureTextHistory();
-              const plain = html.replace(/<[^>]+>/g, "").trim();
-              updateNodeData(id, { richText: html, text: plain });
-            }}
-            onContentSizeChange={(size) => fitNodeToContent(id, size)}
-            onBlur={finishEditing}
-          />
-        </div>
       </div>
     </>
   );

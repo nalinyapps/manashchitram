@@ -124,9 +124,39 @@ export interface ConcentricShapeLayer {
   /** Percentage inset from the outer node box. */
   inset?: number;
   fillColor?: string;
+  fillOpacity?: number;
   borderColor?: string;
   borderWidth?: number;
   borderStyle?: "solid" | "dashed" | "dotted";
+  text?: string;
+  textColor?: string;
+  fontSize?: number;
+}
+
+export interface RadialChartSegment {
+  id: string;
+  text?: string;
+  fillColor?: string;
+  textColor?: string;
+  fontSize?: number;
+}
+
+export interface RadialChartRing {
+  id: string;
+  segmentCount: number;
+  segments?: RadialChartSegment[];
+}
+
+export interface RadialChartData {
+  enabled?: boolean;
+  rotation?: number;
+  segmentBorderColor?: string;
+  segmentBorderWidth?: number;
+  centerText?: string;
+  centerColor?: string;
+  centerTextColor?: string;
+  centerRadius?: number;
+  rings?: RadialChartRing[];
 }
 
 export interface BaseNodeData extends Record<string, unknown> {
@@ -139,6 +169,7 @@ export interface BaseNodeData extends Record<string, unknown> {
   borderWidth?: number;
   borderRadius?: number;
   borderStyle?: "solid" | "dashed" | "dotted";
+  rotation?: number;
   borderLayers?: BorderLayer[];
   fontSize?: number;
   fontFamily?: string;
@@ -183,6 +214,7 @@ export interface ShapeNodeData extends BaseNodeData {
   text?: string;
   petalCount?: number;
   concentricLayers?: ConcentricShapeLayer[];
+  radialChart?: RadialChartData;
 }
 
 export interface SanskritCardNodeData extends BaseNodeData {
