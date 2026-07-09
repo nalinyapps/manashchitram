@@ -133,6 +133,7 @@ function VidyaCanvasInner({ boardId }: { boardId: string }) {
   const setSelectedNodeIds = useCanvasStore((s) => s.setSelectedNodeIds);
   const setSelectedEdgeIds = useCanvasStore((s) => s.setSelectedEdgeIds);
   const activeTool  = useUIStore((s) => s.activeTool);
+  const touchSelectionMode = useUIStore((s) => s.touchSelectionMode);
   const device = useDeviceProfile();
   const isTouchDevice = device.input !== "mouse";
 
@@ -493,6 +494,7 @@ function VidyaCanvasInner({ boardId }: { boardId: string }) {
 
   const onPointerDownCapture = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     if (!isTouchDevice || (event.pointerType !== "touch" && event.pointerType !== "pen")) return;
+    if (touchSelectionMode) return;
     if (!event.isPrimary || activeTool === "connector" || useUIStore.getState().drawingModeNodeId) return;
     if (shouldSkipLongPressPan(event.target)) return;
 
@@ -513,7 +515,7 @@ function VidyaCanvasInner({ boardId }: { boardId: string }) {
       active: false,
       timeout,
     };
-  }, [activeTool, clearLongPressPan, getViewport, isTouchDevice]);
+  }, [activeTool, clearLongPressPan, getViewport, isTouchDevice, touchSelectionMode]);
 
   const onPointerMoveCapture = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     const pan = longPressPanRef.current;
@@ -616,8 +618,8 @@ function VidyaCanvasInner({ boardId }: { boardId: string }) {
       fitViewOptions={{ padding: 0.2, maxZoom: 2 }}
       snapToGrid={settings.snapToGrid}
       snapGrid={[settings.gridSize ?? 20, settings.gridSize ?? 20]}
-      panOnDrag={isTouchDevice ? true : activeTool === "pan" || spacePressed ? [0, 1, 2] : [1, 2]}
-      selectionOnDrag={!isTouchDevice && activeTool === "select"}
+      panOnDrag={isTouchDevice ? !touchSelectionMode : activeTool === "pan" || spacePressed ? [0, 1, 2] : [1, 2]}
+      selectionOnDrag={touchSelectionMode || (!isTouchDevice && activeTool === "select")}
       selectionMode={SelectionMode.Partial}
       multiSelectionKeyCode={["Meta", "Control", "Shift"]}
       panOnScroll

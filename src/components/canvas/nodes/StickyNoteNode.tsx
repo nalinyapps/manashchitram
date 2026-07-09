@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useState, useEffect } from "react";
+import { memo, useState, useEffect, useRef, useCallback } from "react";
 import { NodeResizer, type NodeProps } from "@xyflow/react";
 import { Plus } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -27,6 +27,7 @@ function StickyNoteNodeComponent({ id, data, selected }: NodeProps) {
   const d  = data as StickyNoteNodeData;
   const dd = d as Record<string, unknown>;
   const updateNodeData = useCanvasStore((s) => s.updateNodeData);
+  const fitNodeToContent = useCanvasStore((s) => s.fitNodeToContent);
   const pushHistory    = useCanvasStore((s) => s.pushHistory);
   const createChildNode = useCanvasStore((s) => s.createChildNode);
 
@@ -47,14 +48,32 @@ function StickyNoteNodeComponent({ id, data, selected }: NodeProps) {
 
   const [editing, setEditing] = useState(false);
   const [initialContent] = useState(() => dd.richText as string || d.text || "");
+  const editHistoryCaptured = useRef(false);
+  const editDirty = useRef(false);
+
+  const captureTextHistory = useCallback(() => {
+    if (!editHistoryCaptured.current) {
+      pushHistory();
+      editHistoryCaptured.current = true;
+    }
+    editDirty.current = true;
+  }, [pushHistory]);
+
+  const finishEditing = useCallback(() => {
+    if (editDirty.current) {
+      pushHistory();
+      editDirty.current = false;
+    }
+    editHistoryCaptured.current = false;
+    setEditing(false);
+  }, [pushHistory]);
 
   useEffect(() => {
     if (!selected && editing) {
-      pushHistory();
-      const frame = requestAnimationFrame(() => setEditing(false));
+      const frame = requestAnimationFrame(finishEditing);
       return () => cancelAnimationFrame(frame);
     }
-  }, [selected, editing, pushHistory]);
+  }, [selected, editing, finishEditing]);
 
   return (
     <>
@@ -68,6 +87,8 @@ function StickyNoteNodeComponent({ id, data, selected }: NodeProps) {
           useCanvasStore.setState((s) => ({
             nodes: s.nodes.map((n) => n.id === id ? { ...n, style: { ...(n.style ?? {}), height: undefined } } : n),
           }));
+          editHistoryCaptured.current = false;
+          editDirty.current = false;
           setEditing(true);
         }}
       >
@@ -117,10 +138,12 @@ function StickyNoteNodeComponent({ id, data, selected }: NodeProps) {
             placeholder="Double-click to write…"
             blockAlign={dd.textAlign as "left" | "center" | "right" | "justify" | undefined}
             onChange={(html) => {
+              captureTextHistory();
               const plain = html.replace(/<[^>]+>/g, "").trim();
               updateNodeData(id, { richText: html, text: plain });
             }}
-            onBlur={() => { pushHistory(); setEditing(false); }}
+            onContentSizeChange={(size) => fitNodeToContent(id, size)}
+            onBlur={finishEditing}
           />
         </div>
       </div>

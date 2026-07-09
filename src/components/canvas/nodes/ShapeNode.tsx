@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useState, useEffect } from "react";
+import { memo, useState, useEffect, useRef, useCallback } from "react";
 import { NodeResizer, type NodeProps } from "@xyflow/react";
 import { Plus } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -46,6 +46,7 @@ function ShapeNodeComponent({ id, data, selected }: NodeProps) {
   const d  = data as ShapeNodeData;
   const dd = d as Record<string, unknown>;
   const updateNodeData = useCanvasStore((s) => s.updateNodeData);
+  const fitNodeToContent = useCanvasStore((s) => s.fitNodeToContent);
   const pushHistory    = useCanvasStore((s) => s.pushHistory);
   const createChildNode = useCanvasStore((s) => s.createChildNode);
 
@@ -69,14 +70,32 @@ function ShapeNodeComponent({ id, data, selected }: NodeProps) {
 
   const [editing, setEditing] = useState(false);
   const [initialContent] = useState(() => dd.richText as string || (d.text as string) || "");
+  const editHistoryCaptured = useRef(false);
+  const editDirty = useRef(false);
+
+  const captureTextHistory = useCallback(() => {
+    if (!editHistoryCaptured.current) {
+      pushHistory();
+      editHistoryCaptured.current = true;
+    }
+    editDirty.current = true;
+  }, [pushHistory]);
+
+  const finishEditing = useCallback(() => {
+    if (editDirty.current) {
+      pushHistory();
+      editDirty.current = false;
+    }
+    editHistoryCaptured.current = false;
+    setEditing(false);
+  }, [pushHistory]);
 
   useEffect(() => {
     if (!selected && editing) {
-      pushHistory();
-      const frame = requestAnimationFrame(() => setEditing(false));
+      const frame = requestAnimationFrame(finishEditing);
       return () => cancelAnimationFrame(frame);
     }
-  }, [selected, editing, pushHistory]);
+  }, [selected, editing, finishEditing]);
 
   const shapeStyle: React.CSSProperties = hasClip
     ? { clipPath: CLIP_PATHS[shapeType] }
@@ -89,7 +108,12 @@ function ShapeNodeComponent({ id, data, selected }: NodeProps) {
 
       <div
         className={cn("group relative flex h-full w-full items-center justify-center", isDiamond && "rotate-45")}
-        onDoubleClick={() => { if (!isDrawing) setEditing(true); }}
+        onDoubleClick={() => {
+          if (isDrawing) return;
+          editHistoryCaptured.current = false;
+          editDirty.current = false;
+          setEditing(true);
+        }}
       >
         <NodeHandles color={borderColor} />
         <NodeQuickActions nodeId={id} color={borderColor} selected={selected} counterRotate={isDiamond} />
@@ -182,10 +206,12 @@ function ShapeNodeComponent({ id, data, selected }: NodeProps) {
             className="[&_.ProseMirror]:text-center"
             blockAlign={dd.textAlign as "left" | "center" | "right" | "justify" | undefined}
             onChange={(html) => {
+              captureTextHistory();
               const plain = html.replace(/<[^>]+>/g, "").trim();
               updateNodeData(id, { richText: html, text: plain });
             }}
-            onBlur={() => { pushHistory(); setEditing(false); }}
+            onContentSizeChange={(size) => fitNodeToContent(id, size)}
+            onBlur={finishEditing}
           />
         </div>
       </div>
