@@ -63,6 +63,7 @@ const RADIAL_SEGMENT_COLORS = [
   "#c7d2fe", "#bfdbfe", "#a7f3d0", "#fde68a", "#fecaca", "#fbcfe8",
   "#ddd6fe", "#bae6fd", "#d9f99d", "#fed7aa", "#ccfbf1", "#e9d5ff",
 ];
+const RADIAL_CHART_MIN_SIZE = 420;
 
 function concentricInset(index: number, total: number): number {
   const step = Math.min(CONCENTRIC_INSET_STEP, 48 / Math.max(1, total + 1));
@@ -115,6 +116,7 @@ function normalizeRadialChart(chart: RadialChartData | undefined, centerText = "
     centerText: chart.centerText ?? centerText,
     centerColor: chart.centerColor ?? "#ffffff",
     centerTextColor: chart.centerTextColor ?? "#111827",
+    centerFontSize: chart.centerFontSize && chart.centerFontSize > 0 ? chart.centerFontSize : undefined,
     rings: chart.rings.map((ring) => ({
       ...ring,
       segmentCount: Math.max(1, Math.min(72, Math.round(ring.segmentCount || 1))),
@@ -266,6 +268,7 @@ export function CanvasInspector({ compact = false }: { compact?: boolean }) {
   const settings        = useCanvasStore((s) => s.settings);
   const setSettings     = useCanvasStore((s) => s.setSettings);
   const updateNodeData  = useCanvasStore((s) => s.updateNodeData);
+  const resizeNodeToFitBounds = useCanvasStore((s) => s.resizeNodeToFitBounds);
   const deleteSelected  = useCanvasStore((s) => s.deleteSelected);
   const duplicateSelected = useCanvasStore((s) => s.duplicateSelected);
   const pushHistory     = useCanvasStore((s) => s.pushHistory);
@@ -510,6 +513,13 @@ export function CanvasInspector({ compact = false }: { compact?: boolean }) {
   const isDrawing     = drawingModeNodeId === selectedNode.id;
   const fontGroups    = groupFontsByCategory(FONT_OPTIONS);
   const setRadialChart = (chart: RadialChartData) => setField("radialChart", chart);
+  const enableRadialChart = (chart: RadialChartData) => {
+    setRadialChart({ ...chart, enabled: true });
+    resizeNodeToFitBounds(selectedNode.id, {
+      width: RADIAL_CHART_MIN_SIZE,
+      height: RADIAL_CHART_MIN_SIZE,
+    });
+  };
   const updateRadialRing = (ringIndex: number, patch: Partial<RadialChartRing>) => {
     const rings = activeRadialChart.rings ?? [];
     const nextRings = rings.map((ring, idx) => {
@@ -812,7 +822,7 @@ export function CanvasInspector({ compact = false }: { compact?: boolean }) {
               <Switch
                 checked={!!radialChart?.enabled}
                 onCheckedChange={(checked) => {
-                  if (checked) setRadialChart({ ...activeRadialChart, enabled: true });
+                  if (checked) enableRadialChart(activeRadialChart);
                   else setRadialChart({ ...(radialChart ?? activeRadialChart), enabled: false });
                 }}
               />
@@ -870,8 +880,8 @@ export function CanvasInspector({ compact = false }: { compact?: boolean }) {
                       <SliderControl
                         value={activeRadialChart.segmentBorderWidth ?? 0.8}
                         min={0}
-                        max={4}
-                        step={0.1}
+                        max={20}
+                        step={0.2}
                         onChange={(value) => setRadialChart({ ...activeRadialChart, segmentBorderWidth: value, enabled: true })}
                       />
                     </div>
@@ -884,6 +894,17 @@ export function CanvasInspector({ compact = false }: { compact?: boolean }) {
                       max={42}
                       step={1}
                       onChange={(value) => setRadialChart({ ...activeRadialChart, centerRadius: value, enabled: true })}
+                    />
+                  </div>
+                  <div>
+                    <p className="mb-1 text-[9px] text-muted-foreground">Center text size</p>
+                    <SliderControl
+                      value={activeRadialChart.centerFontSize ?? Math.round(Math.max(5, Math.min(36, (activeRadialChart.centerRadius ?? 14) * 0.38)))}
+                      min={2}
+                      max={64}
+                      step={1}
+                      suffix="px"
+                      onChange={(value) => setRadialChart({ ...activeRadialChart, centerFontSize: value, enabled: true })}
                     />
                   </div>
                   <div>
@@ -950,31 +971,55 @@ export function CanvasInspector({ compact = false }: { compact?: boolean }) {
                         </div>
                         <div className="max-h-64 space-y-1.5 overflow-y-auto pr-1">
                           {segments.map((segment, segmentIndex) => (
-                            <div key={segment.id} className="grid grid-cols-[1fr_28px_28px] items-center gap-1.5">
-                              <Input
-                                aria-label={`Ring ${ringIndex + 1} segment ${segmentIndex + 1} text`}
-                                name={`radial-ring-${ringIndex + 1}-segment-${segmentIndex + 1}-text`}
-                                value={segment.text ?? ""}
-                                placeholder={`Segment ${segmentIndex + 1}`}
-                                className="h-7 text-xs"
-                                onChange={(event) => updateRadialSegment(ringIndex, segmentIndex, { text: event.target.value })}
-                              />
-                              <input
-                                aria-label={`Ring ${ringIndex + 1} segment ${segmentIndex + 1} fill color`}
-                                name={`radial-ring-${ringIndex + 1}-segment-${segmentIndex + 1}-fill`}
-                                type="color"
-                                value={hexInputColor(segment.fillColor, RADIAL_SEGMENT_COLORS[segmentIndex % RADIAL_SEGMENT_COLORS.length])}
-                                onChange={(event) => updateRadialSegment(ringIndex, segmentIndex, { fillColor: event.target.value })}
-                                className="h-7 w-7 rounded border border-border bg-background"
-                              />
-                              <input
-                                aria-label={`Ring ${ringIndex + 1} segment ${segmentIndex + 1} text color`}
-                                name={`radial-ring-${ringIndex + 1}-segment-${segmentIndex + 1}-text-color`}
-                                type="color"
-                                value={hexInputColor(segment.textColor, "#111827")}
-                                onChange={(event) => updateRadialSegment(ringIndex, segmentIndex, { textColor: event.target.value })}
-                                className="h-7 w-7 rounded border border-border bg-background"
-                              />
+                            <div key={segment.id} className="space-y-1.5 rounded-md border border-border/70 p-1.5">
+                              <div className="grid grid-cols-[1fr_28px_28px] items-center gap-1.5">
+                                <Input
+                                  aria-label={`Ring ${ringIndex + 1} segment ${segmentIndex + 1} text`}
+                                  name={`radial-ring-${ringIndex + 1}-segment-${segmentIndex + 1}-text`}
+                                  value={segment.text ?? ""}
+                                  placeholder={`Segment ${segmentIndex + 1}`}
+                                  className="h-7 text-xs"
+                                  onChange={(event) => updateRadialSegment(ringIndex, segmentIndex, { text: event.target.value })}
+                                />
+                                <input
+                                  aria-label={`Ring ${ringIndex + 1} segment ${segmentIndex + 1} fill color`}
+                                  name={`radial-ring-${ringIndex + 1}-segment-${segmentIndex + 1}-fill`}
+                                  type="color"
+                                  value={hexInputColor(segment.fillColor, RADIAL_SEGMENT_COLORS[segmentIndex % RADIAL_SEGMENT_COLORS.length])}
+                                  onChange={(event) => updateRadialSegment(ringIndex, segmentIndex, { fillColor: event.target.value })}
+                                  className="h-7 w-7 rounded border border-border bg-background"
+                                />
+                                <input
+                                  aria-label={`Ring ${ringIndex + 1} segment ${segmentIndex + 1} text color`}
+                                  name={`radial-ring-${ringIndex + 1}-segment-${segmentIndex + 1}-text-color`}
+                                  type="color"
+                                  value={hexInputColor(segment.textColor, "#111827")}
+                                  onChange={(event) => updateRadialSegment(ringIndex, segmentIndex, { textColor: event.target.value })}
+                                  className="h-7 w-7 rounded border border-border bg-background"
+                                />
+                              </div>
+                              <div>
+                                <p className="mb-1 text-[9px] text-muted-foreground">Text size</p>
+                                <SliderControl
+                                  value={segment.fontSize ?? 0}
+                                  min={0}
+                                  max={64}
+                                  step={1}
+                                  suffix="px"
+                                  onChange={(value) => updateRadialSegment(ringIndex, segmentIndex, { fontSize: value > 0 ? value : undefined })}
+                                />
+                              </div>
+                              <div>
+                                <p className="mb-1 text-[9px] text-muted-foreground">Text angle</p>
+                                <SliderControl
+                                  value={segment.textRotation ?? 0}
+                                  min={-180}
+                                  max={180}
+                                  step={5}
+                                  suffix="deg"
+                                  onChange={(value) => updateRadialSegment(ringIndex, segmentIndex, { textRotation: value })}
+                                />
+                              </div>
                             </div>
                           ))}
                         </div>

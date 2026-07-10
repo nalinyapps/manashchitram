@@ -139,6 +139,7 @@ export interface RadialChartSegment {
   fillColor?: string;
   textColor?: string;
   fontSize?: number;
+  textRotation?: number;
 }
 
 export interface RadialChartRing {
@@ -155,6 +156,7 @@ export interface RadialChartData {
   centerText?: string;
   centerColor?: string;
   centerTextColor?: string;
+  centerFontSize?: number;
   centerRadius?: number;
   rings?: RadialChartRing[];
 }

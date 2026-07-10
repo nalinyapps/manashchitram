@@ -1,7 +1,7 @@
 "use client";
 
-import { memo, useState, useEffect, useRef, useCallback, useMemo, type CSSProperties, type ReactNode } from "react";
-import { NodeResizer, type NodeProps } from "@xyflow/react";
+import { memo, useState, useEffect, useRef, useCallback, useMemo, useId, type CSSProperties, type ReactNode } from "react";
+import { NodeResizer, useViewport, type NodeProps } from "@xyflow/react";
 import { Layers2, Plus } from "lucide-react";
 import { cn, generateId } from "@/lib/utils";
 import { NodeHandles } from "./NodeHandles";
@@ -132,30 +132,47 @@ function annularSectorPath(innerRadius: number, outerRadius: number, startAngle:
   ].join(" ");
 }
 
-function wrapTextLines(text: string | undefined, maxChars: number, maxLines = 3): string[] {
+function wrapTextLines(text: string | undefined, maxChars: number, maxLines = Number.POSITIVE_INFINITY): string[] {
   if (!text?.trim()) return [];
-  const explicit = text.split(/\n/).map((line) => line.trim()).filter(Boolean);
-  if (explicit.length > 1) return explicit.slice(0, maxLines);
-  const words = text.trim().split(/\s+/);
-  if (words.length <= 2 && text.trim().length <= maxChars) return [text.trim()];
+  const safeMaxChars = Math.max(1, Math.floor(maxChars));
+  const sourceLines = text
+    .replace(/\r\n/g, "\n")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
   const lines: string[] = [];
-  let current = "";
-  for (const word of words) {
-    const next = current ? `${current} ${word}` : word;
-    if (next.length > maxChars && current) {
-      lines.push(current);
-      current = word;
-    } else {
-      current = next;
-    }
-    if (lines.length === maxLines - 1) break;
-  }
-  if (current && lines.length < maxLines) lines.push(current);
-  return lines;
-}
 
-function splitTextLines(text: string | undefined, maxLines = 3): string[] {
-  return wrapTextLines(text, 14, maxLines);
+  for (const sourceLine of sourceLines) {
+    const words = sourceLine.split(/\s+/).filter(Boolean);
+    let current = "";
+
+    for (const word of words) {
+      if (word.length > safeMaxChars) {
+        if (current) {
+          lines.push(current);
+          current = "";
+        }
+        for (let offset = 0; offset < word.length; offset += safeMaxChars) {
+          lines.push(word.slice(offset, offset + safeMaxChars));
+        }
+        continue;
+      }
+
+      const next = current ? `${current} ${word}` : word;
+      if (next.length > safeMaxChars && current) {
+        lines.push(current);
+        current = word;
+      } else {
+        current = next;
+      }
+    }
+
+    if (current) {
+      lines.push(current);
+    }
+  }
+
+  return lines.slice(0, Number.isFinite(maxLines) ? maxLines : lines.length);
 }
 
 function fitSegmentText(
@@ -164,17 +181,53 @@ function fitSegmentText(
   radialBand: number,
   preferredFontSize?: number
 ): { lines: string[]; fontSize: number } {
-  const preferred = preferredFontSize ?? Math.max(2.8, Math.min(7.8, radialBand * 0.34));
-  const maxLines = Math.max(1, Math.min(4, Math.floor((radialBand * 0.9) / Math.max(2.4, preferred * 0.92))));
-  const charsPerLine = Math.max(2, Math.floor((arcLength * 0.82) / Math.max(1.4, preferred * 0.55)));
-  const lines = wrapTextLines(text, charsPerLine, maxLines);
-  const longest = Math.max(1, ...lines.map((line) => line.length));
-  const widthFit = (arcLength * 0.9) / (longest * 0.58);
-  const heightFit = (radialBand * 0.82) / (Math.max(1, lines.length) * 1.12);
-  return {
-    lines,
-    fontSize: Math.max(2.2, Math.min(preferred, widthFit, heightFit)),
-  };
+  if (!text?.trim()) {
+    return { lines: [], fontSize: preferredFontSize ?? Math.max(2.8, Math.min(7.8, radialBand * 0.34)) };
+  }
+
+  const preferred = preferredFontSize ?? Math.max(3.2, Math.min(10, radialBand * 0.42));
+  const availableWidth = Math.max(2, arcLength * 0.9);
+  const availableHeight = Math.max(2, radialBand * 0.84);
+
+  for (let fontSize = preferred; fontSize >= 0.55; fontSize -= 0.15) {
+    const charsPerLine = Math.max(1, Math.floor(availableWidth / Math.max(0.36, fontSize * 0.54)));
+    const lines = wrapTextLines(text, charsPerLine);
+    const longest = Math.max(1, ...lines.map((line) => line.length));
+    const widthFits = longest * fontSize * 0.54 <= availableWidth;
+    const heightFits = lines.length * fontSize * 1.12 <= availableHeight;
+    if (widthFits && heightFits) return { lines, fontSize };
+  }
+
+  const fallbackLines = wrapTextLines(text, Math.max(1, Math.floor(availableWidth / 0.35)));
+  const longest = Math.max(1, ...fallbackLines.map((line) => line.length));
+  const widthFit = availableWidth / (longest * 0.54);
+  const heightFit = availableHeight / (Math.max(1, fallbackLines.length) * 1.12);
+  return { lines: fallbackLines, fontSize: Math.max(0.35, Math.min(0.55, widthFit, heightFit)) };
+}
+
+function fitCenterText(text: string | undefined, radius: number, preferredFontSize?: number): { lines: string[]; fontSize: number } {
+  if (!text?.trim() || radius <= 0) {
+    return { lines: [], fontSize: preferredFontSize ?? Math.max(3, radius * 0.34) };
+  }
+
+  const preferred = preferredFontSize ?? Math.max(3, Math.min(12, radius * 0.38));
+  const availableWidth = Math.max(2, radius * 1.62);
+  const availableHeight = Math.max(2, radius * 1.55);
+
+  for (let fontSize = preferred; fontSize >= 0.55; fontSize -= 0.15) {
+    const charsPerLine = Math.max(1, Math.floor(availableWidth / Math.max(0.36, fontSize * 0.54)));
+    const lines = wrapTextLines(text, charsPerLine);
+    const longest = Math.max(1, ...lines.map((line) => line.length));
+    const widthFits = longest * fontSize * 0.54 <= availableWidth;
+    const heightFits = lines.length * fontSize * 1.12 <= availableHeight;
+    if (widthFits && heightFits) return { lines, fontSize };
+  }
+
+  const fallbackLines = wrapTextLines(text, Math.max(1, Math.floor(availableWidth / 0.35)));
+  const longest = Math.max(1, ...fallbackLines.map((line) => line.length));
+  const widthFit = availableWidth / (longest * 0.54);
+  const heightFit = availableHeight / (Math.max(1, fallbackLines.length) * 1.12);
+  return { lines: fallbackLines, fontSize: Math.max(0.35, Math.min(0.55, widthFit, heightFit)) };
 }
 
 function chartRingSegments(ring: RadialChartRing): RadialChartSegment[] {
@@ -214,6 +267,9 @@ function RadialChartLayer({
   onSegmentEdit?: (edit: ChartTextEdit & { kind: "segment" }) => void;
   onCenterEdit?: (edit: ChartTextEdit & { kind: "center" }) => void;
 }) {
+  const rawClipId = useId();
+  const clipId = `radial-chart-clip-${rawClipId.replace(/:/g, "")}`;
+
   if (!chart?.enabled) return null;
   const rings = chart.rings?.length ? chart.rings : [{ id: "ring-1", segmentCount: 6 }];
   const centerRadius = Math.max(0, Math.min(42, chart.centerRadius ?? 14));
@@ -221,77 +277,95 @@ function RadialChartLayer({
   const ringThickness = rings.length ? (outerRadius - centerRadius) / rings.length : 0;
   const rotation = chart.rotation ?? 0;
   const segmentBorderColor = chart.segmentBorderColor ?? borderColor;
-  const segmentBorderWidth = Math.max(0, chart.segmentBorderWidth ?? 0.6);
+  const segmentBorderWidth = Math.max(0, chart.segmentBorderWidth ?? 0.8);
+  const centerTextFit = fitCenterText(
+    chart.centerText,
+    centerRadius,
+    chart.centerFontSize && chart.centerFontSize > 0 ? chart.centerFontSize : undefined
+  );
 
   return (
     <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="pointer-events-none absolute inset-0 z-[2] h-full w-full">
-      {rings.map((ring, ringIndex) => {
-        const innerRadius = centerRadius + ringThickness * ringIndex;
-        const segmentOuterRadius = centerRadius + ringThickness * (ringIndex + 1);
-        const segments = chartRingSegments(ring);
-        return segments.map((segment, segmentIndex) => {
-          const start = rotation + (360 / segments.length) * segmentIndex;
-          const end = rotation + (360 / segments.length) * (segmentIndex + 1);
-          const mid = (start + end) / 2;
-          const textRadius = (innerRadius + segmentOuterRadius) / 2;
-          const textPoint = polarPoint(50, 50, textRadius, mid);
-          const textRotation = ((mid + 90) % 360 + 360) % 360;
-          const adjustedTextRotation = textRotation > 90 && textRotation < 270 ? textRotation + 180 : textRotation;
-          const angleWidth = 360 / segments.length;
-          const arcLength = (2 * Math.PI * textRadius * angleWidth) / 360;
-          const { lines, fontSize } = fitSegmentText(segment.text, arcLength, ringThickness, segment.fontSize);
-          const isEditingSegment =
-            editingText?.kind === "segment" &&
-            editingText.ringIndex === ringIndex &&
-            editingText.segmentIndex === segmentIndex;
-          return (
-            <g key={`${ring.id}-${segment.id}-${segmentIndex}`}>
-              <path
-                d={annularSectorPath(innerRadius, segmentOuterRadius, start, end)}
-                className="nodrag nopan cursor-text"
-                fill={segment.fillColor ?? (ringIndex % 2 ? "rgba(255,255,255,0.28)" : "rgba(255,255,255,0.12)")}
-                stroke={segmentBorderWidth > 0 ? segmentBorderColor : "none"}
-                strokeWidth={segmentBorderWidth}
-                vectorEffect="non-scaling-stroke"
-                pointerEvents="auto"
-                onPointerDown={(event) => event.stopPropagation()}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onSegmentEdit?.({
-                    kind: "segment",
-                    ringIndex,
-                    segmentIndex,
-                    x: textPoint.x,
-                    y: textPoint.y,
-                    width: Math.max(64, Math.min(220, arcLength * 2.5)),
-                    rotation: adjustedTextRotation,
-                    value: segment.text ?? "",
-                  });
-                }}
-              />
-              {lines.length > 0 && !isEditingSegment && (
-                <text
-                  x={textPoint.x}
-                  y={textPoint.y}
-                  pointerEvents="none"
-                  textAnchor="middle"
-                  dominantBaseline="middle"
-                  fill={segment.textColor ?? "#111827"}
-                  fontSize={fontSize}
-                  fontWeight={ringIndex === 0 ? 700 : 500}
-                  transform={`rotate(${adjustedTextRotation} ${textPoint.x} ${textPoint.y})`}
-                >
-                  {lines.map((line, lineIndex) => (
-                    <tspan key={lineIndex} x={textPoint.x} dy={lineIndex === 0 ? 0 : fontSize * 1.12}>
-                      {line}
-                    </tspan>
-                  ))}
-                </text>
-              )}
-            </g>
-          );
-        });
-      })}
+      <defs>
+        <clipPath id={clipId}>
+          <circle cx="50" cy="50" r="49.5" />
+        </clipPath>
+      </defs>
+      <g clipPath={`url(#${clipId})`}>
+        {rings.map((ring, ringIndex) => {
+          const innerRadius = centerRadius + ringThickness * ringIndex;
+          const segmentOuterRadius = centerRadius + ringThickness * (ringIndex + 1);
+          const segments = chartRingSegments(ring);
+          return segments.map((segment, segmentIndex) => {
+            const start = rotation + (360 / segments.length) * segmentIndex;
+            const end = rotation + (360 / segments.length) * (segmentIndex + 1);
+            const mid = (start + end) / 2;
+            const textRadius = (innerRadius + segmentOuterRadius) / 2;
+            const textPoint = polarPoint(50, 50, textRadius, mid);
+            const textRotation = ((mid + 90) % 360 + 360) % 360;
+            const readableTextRotation = textRotation > 90 && textRotation < 270 ? textRotation + 180 : textRotation;
+            const finalTextRotation = readableTextRotation + (segment.textRotation ?? 0);
+            const angleWidth = 360 / segments.length;
+            const arcLength = (2 * Math.PI * textRadius * angleWidth) / 360;
+            const { lines, fontSize } = fitSegmentText(
+              segment.text,
+              arcLength,
+              ringThickness,
+              segment.fontSize && segment.fontSize > 0 ? segment.fontSize : undefined
+            );
+            const lineOffset = -((lines.length - 1) * fontSize * 1.12) / 2;
+            const isEditingSegment =
+              editingText?.kind === "segment" &&
+              editingText.ringIndex === ringIndex &&
+              editingText.segmentIndex === segmentIndex;
+            return (
+              <g key={`${ring.id}-${segment.id}-${segmentIndex}`}>
+                <path
+                  d={annularSectorPath(innerRadius, segmentOuterRadius, start, end)}
+                  className="nodrag nopan cursor-text"
+                  fill={segment.fillColor ?? (ringIndex % 2 ? "rgba(255,255,255,0.28)" : "rgba(255,255,255,0.12)")}
+                  stroke={segmentBorderWidth > 0 ? segmentBorderColor : "none"}
+                  strokeWidth={segmentBorderWidth}
+                  pointerEvents="auto"
+                  onPointerDown={(event) => event.stopPropagation()}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onSegmentEdit?.({
+                      kind: "segment",
+                      ringIndex,
+                      segmentIndex,
+                      x: textPoint.x,
+                      y: textPoint.y,
+                      width: Math.max(110, Math.min(280, arcLength * 4)),
+                      rotation: finalTextRotation,
+                      value: segment.text ?? "",
+                    });
+                  }}
+                />
+                {lines.length > 0 && !isEditingSegment && (
+                  <text
+                    x={textPoint.x}
+                    y={textPoint.y}
+                    pointerEvents="none"
+                    textAnchor="middle"
+                    dominantBaseline="middle"
+                    fill={segment.textColor ?? "#111827"}
+                    fontSize={fontSize}
+                    fontWeight={ringIndex === 0 ? 700 : 500}
+                    transform={`rotate(${finalTextRotation} ${textPoint.x} ${textPoint.y})`}
+                  >
+                    {lines.map((line, lineIndex) => (
+                      <tspan key={lineIndex} x={textPoint.x} dy={lineIndex === 0 ? lineOffset : fontSize * 1.12}>
+                        {line}
+                      </tspan>
+                    ))}
+                  </text>
+                )}
+              </g>
+            );
+          });
+        })}
+      </g>
       {centerRadius > 0 && (
         <>
           <circle
@@ -302,7 +376,6 @@ function RadialChartLayer({
             fill={chart.centerColor ?? "rgba(255,255,255,0.9)"}
             stroke={segmentBorderWidth > 0 ? segmentBorderColor : borderColor}
             strokeWidth={Math.max(0.45, segmentBorderWidth)}
-            vectorEffect="non-scaling-stroke"
             pointerEvents="auto"
             onPointerDown={(event) => event.stopPropagation()}
             onClick={(event) => {
@@ -317,7 +390,7 @@ function RadialChartLayer({
               });
             }}
           />
-          {chart.centerText && editingText?.kind !== "center" && (
+          {centerTextFit.lines.length > 0 && editingText?.kind !== "center" && (
             <text
               x="50"
               y="50"
@@ -325,11 +398,15 @@ function RadialChartLayer({
               textAnchor="middle"
               dominantBaseline="middle"
               fill={chart.centerTextColor ?? "#111827"}
-              fontSize={Math.max(3, centerRadius * 0.32)}
+              fontSize={centerTextFit.fontSize}
               fontWeight="700"
             >
-              {splitTextLines(chart.centerText, 2).map((line, lineIndex) => (
-                <tspan key={lineIndex} x="50" dy={lineIndex === 0 ? 0 : Math.max(3, centerRadius * 0.34)}>
+              {centerTextFit.lines.map((line, lineIndex) => (
+                <tspan
+                  key={lineIndex}
+                  x="50"
+                  dy={lineIndex === 0 ? -((centerTextFit.lines.length - 1) * centerTextFit.fontSize * 1.12) / 2 : centerTextFit.fontSize * 1.12}
+                >
                   {line}
                 </tspan>
               ))}
@@ -516,6 +593,7 @@ function ShapeNodeComponent({ id, data, selected }: NodeProps) {
   const fitNodeToContent = useCanvasStore((s) => s.fitNodeToContent);
   const pushHistory    = useCanvasStore((s) => s.pushHistory);
   const createChildNode = useCanvasStore((s) => s.createChildNode);
+  const viewport = useViewport();
 
   const drawingModeNodeId   = useUIStore((s) => s.drawingModeNodeId);
   const drawingRegionColor  = useUIStore((s) => s.drawingRegionColor);
@@ -579,6 +657,9 @@ function ShapeNodeComponent({ id, data, selected }: NodeProps) {
     ? { clipPath: CLIP_PATHS[shapeType] }
     : { borderRadius: bRadius };
   const activeChartTextEdit = selected && radialChart?.enabled ? chartTextEdit : null;
+  const chartEditorScale = activeChartTextEdit
+    ? Math.min(5, Math.max(1, 1 / Math.max(0.2, viewport.zoom)))
+    : 1;
   const visualRotationStyle: CSSProperties = {
     transform: rotation ? `rotate(${rotation}deg)` : undefined,
     transformOrigin: "center",
@@ -673,7 +754,7 @@ function ShapeNodeComponent({ id, data, selected }: NodeProps) {
             />
           </div>
 
-            <RadialChartLayer
+          <RadialChartLayer
             chart={radialChart}
             borderColor={borderColor}
             editingText={activeChartTextEdit}
@@ -694,16 +775,22 @@ function ShapeNodeComponent({ id, data, selected }: NodeProps) {
           />
 
           {activeChartTextEdit && (
-            <input
+            <textarea
               autoFocus
               aria-label={activeChartTextEdit.kind === "center" ? "Edit chart center text" : "Edit chart segment text"}
               name={activeChartTextEdit.kind === "center" ? "radial-chart-inline-center" : "radial-chart-inline-segment"}
-              className="nodrag nopan absolute z-[40] rounded-md border border-primary bg-background/95 px-2 py-1 text-center text-xs font-medium shadow-lg outline-none ring-2 ring-primary/20"
+              rows={3}
+              className="nodrag nopan absolute z-[40] resize-none rounded-md border border-primary bg-background/95 text-center font-medium shadow-lg outline-none ring-2 ring-primary/20"
               value={activeChartTextEdit.value}
               style={{
                 left: `${activeChartTextEdit.x}%`,
                 top: `${activeChartTextEdit.y}%`,
-                width: activeChartTextEdit.width,
+                width: Math.max(170, activeChartTextEdit.width) * chartEditorScale,
+                minHeight: 64 * chartEditorScale,
+                maxHeight: 170 * chartEditorScale,
+                padding: `${7 * chartEditorScale}px ${9 * chartEditorScale}px`,
+                fontSize: 14 * chartEditorScale,
+                lineHeight: `${19 * chartEditorScale}px`,
                 transform: `translate(-50%, -50%) rotate(${activeChartTextEdit.rotation}deg)`,
                 transformOrigin: "center",
               }}
@@ -713,7 +800,7 @@ function ShapeNodeComponent({ id, data, selected }: NodeProps) {
               onBlur={() => setChartTextEdit(null)}
               onKeyDown={(event) => {
                 event.stopPropagation();
-                if (event.key === "Enter" || event.key === "Escape") {
+                if (event.key === "Escape" || (event.key === "Enter" && (event.metaKey || event.ctrlKey))) {
                   event.currentTarget.blur();
                 }
               }}
