@@ -685,6 +685,6 @@ export const LAYOUT_OPTIONS: LayoutOption[] = [
   { mode: "list",       label: "List",       description: "Indented outline" },
   { mode: "topDown",    label: "Top Down",   description: "Hierarchy from the top" },
   { mode: "linear",     label: "Linear",     description: "Single connected line" },
-  { mode: "radial",     label: "Radial",     description: "Concentric rings by depth" },
+  { mode: "radial",     label: "Radial",     description: "Hierarchy-aware sunburst" },
   { mode: "matrix",     label: "Matrix",     description: "Structured chart / table" },
 ];
