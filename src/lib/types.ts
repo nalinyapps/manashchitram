@@ -258,12 +258,21 @@ export interface FrameNodeData extends BaseNodeData {
   matrixFrameFor?: string;
 }
 
+export interface SunburstNodeData extends BaseNodeData {
+  rootId: string;
+  sunburstFor: string;
+  chartSize?: number;
+  title?: string;
+}
+
 export interface VidyaEdgeData extends Record<string, unknown> {
   label?: string;
   color?: string;
   width?: number;
   dashed?: boolean;
   hiddenInMatrix?: boolean;
+  hiddenInSunburst?: boolean;
+  hiddenInSunburstFor?: string;
   layoutMode?: LayoutMode;
   arrowStart?: boolean;
   arrowEnd?: boolean;
@@ -280,6 +289,7 @@ export type VidyaNode = Node<
   | ShlokaCardNodeData
   | GrammarCardNodeData
   | FrameNodeData
+  | SunburstNodeData
 >;
 export type VidyaEdge = Edge<VidyaEdgeData>;
 

@@ -237,8 +237,8 @@ function chartRingSegments(ring: RadialChartRing): RadialChartSegment[] {
 }
 
 type ChartTextEdit =
-  | { kind: "segment"; ringIndex: number; segmentIndex: number; x: number; y: number; width: number; rotation: number; value: string }
-  | { kind: "center"; x: number; y: number; width: number; rotation: number; value: string };
+  | { kind: "segment"; ringIndex: number; segmentIndex: number; x: number; y: number; width: number; height: number; rotation: number; value: string; textColor?: string }
+  | { kind: "center"; x: number; y: number; width: number; height: number; rotation: number; value: string; textColor?: string };
 
 function updateRadialSegmentText(chart: RadialChartData, ringIndex: number, segmentIndex: number, text: string): RadialChartData {
   const rings = chart.rings ?? [];
@@ -269,6 +269,7 @@ function RadialChartLayer({
 }) {
   const rawClipId = useId();
   const clipId = `radial-chart-clip-${rawClipId.replace(/:/g, "")}`;
+  const centerClipId = `${clipId}-center`;
 
   if (!chart?.enabled) return null;
   const rings = chart.rings?.length ? chart.rings : [{ id: "ring-1", segmentCount: 6 }];
@@ -289,6 +290,9 @@ function RadialChartLayer({
       <defs>
         <clipPath id={clipId}>
           <circle cx="50" cy="50" r="49.5" />
+        </clipPath>
+        <clipPath id={centerClipId}>
+          <circle cx="50" cy="50" r={centerRadius} />
         </clipPath>
       </defs>
       <g clipPath={`url(#${clipId})`}>
@@ -318,10 +322,15 @@ function RadialChartLayer({
               editingText?.kind === "segment" &&
               editingText.ringIndex === ringIndex &&
               editingText.segmentIndex === segmentIndex;
+            const segmentPath = annularSectorPath(innerRadius, segmentOuterRadius, start, end);
+            const segmentClipId = `${clipId}-segment-${ringIndex}-${segmentIndex}`;
             return (
               <g key={`${ring.id}-${segment.id}-${segmentIndex}`}>
+                <clipPath id={segmentClipId}>
+                  <path d={segmentPath} />
+                </clipPath>
                 <path
-                  d={annularSectorPath(innerRadius, segmentOuterRadius, start, end)}
+                  d={segmentPath}
                   className="nodrag nopan cursor-text"
                   fill={segment.fillColor ?? (ringIndex % 2 ? "rgba(255,255,255,0.28)" : "rgba(255,255,255,0.12)")}
                   stroke={segmentBorderWidth > 0 ? segmentBorderColor : "none"}
@@ -337,29 +346,33 @@ function RadialChartLayer({
                       x: textPoint.x,
                       y: textPoint.y,
                       width: Math.max(110, Math.min(280, arcLength * 4)),
+                      height: Math.max(36, Math.min(150, ringThickness * 3.2)),
                       rotation: finalTextRotation,
                       value: segment.text ?? "",
+                      textColor: segment.textColor ?? "#111827",
                     });
                   }}
                 />
                 {lines.length > 0 && !isEditingSegment && (
-                  <text
-                    x={textPoint.x}
-                    y={textPoint.y}
-                    pointerEvents="none"
-                    textAnchor="middle"
-                    dominantBaseline="middle"
-                    fill={segment.textColor ?? "#111827"}
-                    fontSize={fontSize}
-                    fontWeight={ringIndex === 0 ? 700 : 500}
-                    transform={`rotate(${finalTextRotation} ${textPoint.x} ${textPoint.y})`}
-                  >
-                    {lines.map((line, lineIndex) => (
-                      <tspan key={lineIndex} x={textPoint.x} dy={lineIndex === 0 ? lineOffset : fontSize * 1.12}>
-                        {line}
-                      </tspan>
-                    ))}
-                  </text>
+                  <g clipPath={`url(#${segmentClipId})`}>
+                    <text
+                      x={textPoint.x}
+                      y={textPoint.y}
+                      pointerEvents="none"
+                      textAnchor="middle"
+                      dominantBaseline="middle"
+                      fill={segment.textColor ?? "#111827"}
+                      fontSize={fontSize}
+                      fontWeight={ringIndex === 0 ? 700 : 500}
+                      transform={`rotate(${finalTextRotation} ${textPoint.x} ${textPoint.y})`}
+                    >
+                      {lines.map((line, lineIndex) => (
+                        <tspan key={lineIndex} x={textPoint.x} dy={lineIndex === 0 ? lineOffset : fontSize * 1.12}>
+                          {line}
+                        </tspan>
+                      ))}
+                    </text>
+                  </g>
                 )}
               </g>
             );
@@ -385,32 +398,36 @@ function RadialChartLayer({
                 x: 50,
                 y: 50,
                 width: Math.max(72, centerRadius * 4.5),
+                height: Math.max(56, centerRadius * 3.4),
                 rotation: 0,
                 value: chart.centerText ?? "",
+                textColor: chart.centerTextColor ?? "#111827",
               });
             }}
           />
           {centerTextFit.lines.length > 0 && editingText?.kind !== "center" && (
-            <text
-              x="50"
-              y="50"
-              pointerEvents="none"
-              textAnchor="middle"
-              dominantBaseline="middle"
-              fill={chart.centerTextColor ?? "#111827"}
-              fontSize={centerTextFit.fontSize}
-              fontWeight="700"
-            >
-              {centerTextFit.lines.map((line, lineIndex) => (
-                <tspan
-                  key={lineIndex}
-                  x="50"
-                  dy={lineIndex === 0 ? -((centerTextFit.lines.length - 1) * centerTextFit.fontSize * 1.12) / 2 : centerTextFit.fontSize * 1.12}
-                >
-                  {line}
-                </tspan>
-              ))}
-            </text>
+            <g clipPath={`url(#${centerClipId})`}>
+              <text
+                x="50"
+                y="50"
+                pointerEvents="none"
+                textAnchor="middle"
+                dominantBaseline="middle"
+                fill={chart.centerTextColor ?? "#111827"}
+                fontSize={centerTextFit.fontSize}
+                fontWeight="700"
+              >
+                {centerTextFit.lines.map((line, lineIndex) => (
+                  <tspan
+                    key={lineIndex}
+                    x="50"
+                    dy={lineIndex === 0 ? -((centerTextFit.lines.length - 1) * centerTextFit.fontSize * 1.12) / 2 : centerTextFit.fontSize * 1.12}
+                  >
+                    {line}
+                  </tspan>
+                ))}
+              </text>
+            </g>
           )}
         </>
       )}
@@ -780,17 +797,21 @@ function ShapeNodeComponent({ id, data, selected }: NodeProps) {
               aria-label={activeChartTextEdit.kind === "center" ? "Edit chart center text" : "Edit chart segment text"}
               name={activeChartTextEdit.kind === "center" ? "radial-chart-inline-center" : "radial-chart-inline-segment"}
               rows={3}
-              className="nodrag nopan absolute z-[40] resize-none rounded-md border border-primary bg-background/95 text-center font-medium shadow-lg outline-none ring-2 ring-primary/20"
+              className="nodrag nopan absolute z-[40] resize-none overflow-hidden border-0 bg-transparent text-center font-bold outline-none ring-0"
               value={activeChartTextEdit.value}
               style={{
                 left: `${activeChartTextEdit.x}%`,
                 top: `${activeChartTextEdit.y}%`,
                 width: Math.max(170, activeChartTextEdit.width) * chartEditorScale,
-                minHeight: 64 * chartEditorScale,
-                maxHeight: 170 * chartEditorScale,
-                padding: `${7 * chartEditorScale}px ${9 * chartEditorScale}px`,
+                height: Math.max(48, activeChartTextEdit.height) * chartEditorScale,
+                minHeight: Math.max(48, activeChartTextEdit.height) * chartEditorScale,
+                maxHeight: Math.max(48, activeChartTextEdit.height) * chartEditorScale,
+                padding: `${4 * chartEditorScale}px ${6 * chartEditorScale}px`,
+                color: activeChartTextEdit.textColor ?? "#111827",
                 fontSize: 14 * chartEditorScale,
                 lineHeight: `${19 * chartEditorScale}px`,
+                boxShadow: "none",
+                caretColor: activeChartTextEdit.textColor ?? "#111827",
                 transform: `translate(-50%, -50%) rotate(${activeChartTextEdit.rotation}deg)`,
                 transformOrigin: "center",
               }}

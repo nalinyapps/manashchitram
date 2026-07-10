@@ -106,9 +106,14 @@ function findLayoutRoot(nodeId: string, nodes: Node[], hierarchy: ReturnType<typ
 }
 
 const BOARD_MATRIX_FRAME_KEY = "__board__";
+const BOARD_SUNBURST_KEY = "__board__";
 
 function matrixFrameKey(rootId?: string): string {
   return rootId ?? BOARD_MATRIX_FRAME_KEY;
+}
+
+function sunburstFrameKey(rootId?: string): string {
+  return rootId ?? BOARD_SUNBURST_KEY;
 }
 
 function autoMatrixFrameKey(node: Node): string | null {
@@ -118,6 +123,53 @@ function autoMatrixFrameKey(node: Node): string | null {
 
 function isAutoMatrixFrame(node: Node): boolean {
   return autoMatrixFrameKey(node) !== null;
+}
+
+function autoSunburstKey(node: Node): string | null {
+  const data = node.data as { sunburstFor?: unknown } | undefined;
+  return node.type === "sunburst" && typeof data?.sunburstFor === "string" ? data.sunburstFor : null;
+}
+
+function isAutoSunburstNode(node: Node): boolean {
+  return autoSunburstKey(node) !== null;
+}
+
+function clearSunburstNodes(nodes: Node[]): Node[] {
+  return nodes
+    .filter((node) => !isAutoSunburstNode(node))
+    .map((node) => {
+      const data = (node.data ?? {}) as Record<string, unknown>;
+      if (!data.sunburstHiddenFor) return node;
+      const { sunburstHiddenFor: _sunburstHiddenFor, ...nextData } = data;
+      void _sunburstHiddenFor;
+      return { ...node, hidden: false, data: nextData };
+    });
+}
+
+function sunburstTreeStats(rootId: string, hierarchy: ReturnType<typeof buildHierarchy>): { maxDepth: number; leaves: number } {
+  const walk = (id: string, depth: number): { maxDepth: number; leaves: number } => {
+    const childIds = hierarchy.get(id)?.childIds ?? [];
+    if (!childIds.length) return { maxDepth: depth, leaves: 1 };
+    return childIds.reduce(
+      (stats, childId) => {
+        const childStats = walk(childId, depth + 1);
+        return {
+          maxDepth: Math.max(stats.maxDepth, childStats.maxDepth),
+          leaves: stats.leaves + childStats.leaves,
+        };
+      },
+      { maxDepth: depth, leaves: 0 }
+    );
+  };
+  return walk(rootId, 0);
+}
+
+function sunburstChartSize(rootId: string, hierarchy: ReturnType<typeof buildHierarchy>): number {
+  const { maxDepth, leaves } = sunburstTreeStats(rootId, hierarchy);
+  const ringDepth = Math.max(1, maxDepth);
+  const byDepth = 120 + ringDepth * 112 + 44;
+  const byLeaves = (Math.max(1, leaves) * 44) / Math.PI + 64;
+  return Math.ceil(Math.max(680, byDepth * 2, byLeaves));
 }
 
 function withMatrixFrame(nodes: Node[], scopeIds: Set<string>, key: string, enabled: boolean): Node[] {
@@ -158,6 +210,57 @@ function withMatrixFrame(nodes: Node[], scopeIds: Set<string>, key: string, enab
   };
 
   return [...withoutCurrentFrame, frame];
+}
+
+function withSunburstNode(
+  nodes: Node[],
+  hierarchy: ReturnType<typeof buildHierarchy>,
+  scopeIds: Set<string>,
+  key: string,
+  rootId: string | undefined,
+  enabled: boolean
+): Node[] {
+  const restored = clearSunburstNodes(nodes);
+  if (!enabled || !rootId) return restored;
+
+  const rootNode = restored.find((node) => node.id === rootId);
+  if (!rootNode) return restored;
+
+  const rootRect = getNodeRect(rootNode);
+  const rootCenter = {
+    x: rootRect.x + rootRect.width / 2,
+    y: rootRect.y + rootRect.height / 2,
+  };
+  const chartSize = sunburstChartSize(rootId, hierarchy);
+  const hiddenNodes = restored.map((node) => {
+    if (!scopeIds.has(node.id)) return node;
+    return {
+      ...node,
+      hidden: true,
+      data: { ...(node.data ?? {}), sunburstHiddenFor: key },
+    };
+  });
+  const rootData = (rootNode.data ?? {}) as Record<string, unknown>;
+  const title = typeof rootData.text === "string" ? rootData.text : typeof rootData.title === "string" ? rootData.title : "";
+  const chartNode: Node = {
+    id: `sunburst-${key}`,
+    type: "sunburst",
+    position: { x: rootCenter.x - chartSize / 2, y: rootCenter.y - chartSize / 2 },
+    data: {
+      rootId,
+      sunburstFor: key,
+      chartSize,
+      title,
+      locked: true,
+      tags: [],
+    },
+    style: { width: chartSize, height: chartSize },
+    zIndex: 20,
+    selectable: false,
+    draggable: false,
+  };
+
+  return [...hiddenNodes, chartNode];
 }
 
 /**
@@ -863,16 +966,24 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     };
     const route = routeForMode(mode, parent, newNode);
     const hiddenInMatrix = mode === "matrix";
+    const hiddenInSunburst = mode === "radial";
     const newEdge: Edge = {
       id: generateId(),
       source: parentId,
       target: childId,
       type: "branch",
-      hidden: hiddenInMatrix,
+      hidden: hiddenInMatrix || hiddenInSunburst,
       sourceHandle: route.sourceHandle,
       targetHandle: route.targetHandle,
       markerEnd: { type: MarkerType.ArrowClosed, color: "#6366f1" },
-      data: { edgeType: "branch", curveStyle: route.curveStyle, hiddenInMatrix, layoutMode: mode },
+      data: {
+        edgeType: "branch",
+        curveStyle: route.curveStyle,
+        hiddenInMatrix,
+        hiddenInSunburst,
+        hiddenInSunburstFor: hiddenInSunburst ? sunburstFrameKey(parentId) : undefined,
+        layoutMode: mode,
+      },
     };
     // Record child in the parent's sibling order.
     const prevOrder = (parentData.childOrder as string[]) ?? [];
@@ -887,13 +998,18 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     const nextEdges = [...edges, newEdge];
     const nextHierarchy = buildHierarchy(nextNodes, nextEdges);
     const layoutRoot = findLayoutRoot(parentId, nextNodes, nextHierarchy);
-    const placements = layoutRoot.mode
+    const useSunburst = layoutRoot.mode === "radial";
+    const placements = layoutRoot.mode && !useSunburst
       ? computeLayout(nextNodes, nextEdges, layoutRoot.mode, { rootId: layoutRoot.id })
       : resolveInsertedNodeCollisions(nextNodes, childId);
     const placedNodes = applyPlacements(nextNodes, placements);
-    const finalNodes = layoutRoot.mode === "matrix"
-      ? withMatrixFrame(placedNodes, new Set(getSubtree(layoutRoot.id, nextHierarchy)), matrixFrameKey(layoutRoot.id), true)
+    const rootScope = new Set(getSubtree(layoutRoot.id, nextHierarchy));
+    const matrixNodes = layoutRoot.mode === "matrix"
+      ? withMatrixFrame(placedNodes, rootScope, matrixFrameKey(layoutRoot.id), true)
       : placedNodes;
+    const finalNodes = useSunburst
+      ? withSunburstNode(matrixNodes, nextHierarchy, rootScope, sunburstFrameKey(layoutRoot.id), layoutRoot.id, true)
+      : matrixNodes;
 
     set({
       nodes: finalNodes,
@@ -932,28 +1048,41 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       const edgeMode = mode ?? "horizontal";
       const route = routeForMode(edgeMode, parentNode, newNode);
       const hiddenInMatrix = edgeMode === "matrix";
+      const hiddenInSunburst = edgeMode === "radial";
       newEdges.push({
         id: generateId(),
         source: parentEdge.source,
         target: siblingId,
         type: "branch",
-        hidden: hiddenInMatrix,
+        hidden: hiddenInMatrix || hiddenInSunburst,
         sourceHandle: route.sourceHandle,
         targetHandle: route.targetHandle,
         markerEnd: { type: MarkerType.ArrowClosed, color: "#6366f1" },
-        data: { edgeType: "branch", curveStyle: route.curveStyle, hiddenInMatrix, layoutMode: edgeMode },
+        data: {
+          edgeType: "branch",
+          curveStyle: route.curveStyle,
+          hiddenInMatrix,
+          hiddenInSunburst,
+          hiddenInSunburstFor: hiddenInSunburst ? sunburstFrameKey(parentEdge.source) : undefined,
+          layoutMode: edgeMode,
+        },
       });
     }
     const nextNodes = [...nodes, newNode];
     const nextHierarchy = buildHierarchy(nextNodes, newEdges);
     const layoutRoot = findLayoutRoot(parentEdge?.source ?? nodeId, nextNodes, nextHierarchy);
-    const placements = layoutRoot.mode
+    const useSunburst = layoutRoot.mode === "radial";
+    const placements = layoutRoot.mode && !useSunburst
       ? computeLayout(nextNodes, newEdges, layoutRoot.mode, { rootId: layoutRoot.id })
       : resolveInsertedNodeCollisions(nextNodes, siblingId);
     const placedNodes = applyPlacements(nextNodes, placements);
-    const finalNodes = layoutRoot.mode === "matrix"
-      ? withMatrixFrame(placedNodes, new Set(getSubtree(layoutRoot.id, nextHierarchy)), matrixFrameKey(layoutRoot.id), true)
+    const rootScope = new Set(getSubtree(layoutRoot.id, nextHierarchy));
+    const matrixNodes = layoutRoot.mode === "matrix"
+      ? withMatrixFrame(placedNodes, rootScope, matrixFrameKey(layoutRoot.id), true)
       : placedNodes;
+    const finalNodes = useSunburst
+      ? withSunburstNode(matrixNodes, nextHierarchy, rootScope, sunburstFrameKey(layoutRoot.id), layoutRoot.id, true)
+      : matrixNodes;
 
     set({
       nodes: finalNodes,
@@ -1068,12 +1197,14 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   applyLayout: (mode) => {
     const { nodes, edges, selectedNodeIds } = get();
     if (!nodes.length) return;
-    const layoutNodes = nodes.filter((n) => !isAutoMatrixFrame(n));
+    const layoutNodes = nodes.filter((n) => !isAutoMatrixFrame(n) && !isAutoSunburstNode(n));
     const selectedRootId = selectedNodeIds.length === 1 ? selectedNodeIds[0] : undefined;
     const rootId = selectedRootId && layoutNodes.some((n) => n.id === selectedRootId) ? selectedRootId : undefined;
+    const sunburstEnabled = mode === "radial" && !!rootId;
+    const sunburstKey = sunburstFrameKey(rootId);
 
     const hierarchy = buildHierarchy(layoutNodes, edges);
-    const positions = computeLayout(layoutNodes, edges, mode, { rootId });
+    const positions = sunburstEnabled ? {} : computeLayout(layoutNodes, edges, mode, { rootId });
 
     // Nodes in scope: the selected subtree, or the whole board when nothing selected.
     const scopeIds = rootId
@@ -1086,31 +1217,54 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
     // Reroute parent→child edges within scope, using post-layout geometry.
     const newEdges = edges.map((e) => {
-      const touchesScope = scopeIds.has(e.source) || scopeIds.has(e.target);
-      const insideScope = scopeIds.has(e.source) && scopeIds.has(e.target);
-      if (!touchesScope) return e;
-      if (!insideScope) {
-        const hiddenInMatrix = mode === "matrix";
-        return {
+      const originalData = (e.data ?? {}) as Record<string, unknown>;
+      let edge = e;
+      if (originalData.hiddenInSunburst && (!sunburstEnabled || originalData.hiddenInSunburstFor !== sunburstKey)) {
+        const { hiddenInSunburst: _hiddenInSunburst, hiddenInSunburstFor: _hiddenInSunburstFor, ...restData } = originalData;
+        void _hiddenInSunburst;
+        void _hiddenInSunburstFor;
+        edge = {
           ...e,
-          hidden: hiddenInMatrix,
-          data: { ...(e.data ?? {}), hiddenInMatrix, layoutMode: mode },
+          hidden: !!restData.hiddenInMatrix,
+          data: restData,
         };
       }
-      const parent = byId.get(e.source);
-      const child = byId.get(e.target);
-      if (!parent || !child) return e;
-      const pParent = positions[e.source] ? { ...parent, position: positions[e.source] } : parent;
-      const pChild = positions[e.target] ? { ...child, position: positions[e.target] } : child;
+
+      const touchesScope = scopeIds.has(e.source) || scopeIds.has(e.target);
+      const insideScope = scopeIds.has(e.source) && scopeIds.has(e.target);
+      if (!touchesScope) return edge;
+      if (!insideScope) {
+        const hiddenInMatrix = mode === "matrix";
+        const hiddenInSunburst = false;
+        return {
+          ...edge,
+          hidden: hiddenInMatrix || hiddenInSunburst,
+          data: { ...(edge.data ?? {}), hiddenInMatrix, hiddenInSunburst, layoutMode: mode },
+        };
+      }
+      const parent = byId.get(edge.source);
+      const child = byId.get(edge.target);
+      if (!parent || !child) return edge;
+      const pParent = positions[edge.source] ? { ...parent, position: positions[edge.source] } : parent;
+      const pChild = positions[edge.target] ? { ...child, position: positions[edge.target] } : child;
       const route = routeForMode(mode, pParent, pChild);
       const hiddenInMatrix = mode === "matrix";
+      const hiddenInSunburst = !!sunburstEnabled && hierarchy.get(edge.target)?.parentId === edge.source;
       return {
-        ...e,
-        hidden: hiddenInMatrix,
+        ...edge,
+        hidden: hiddenInMatrix || hiddenInSunburst,
         sourceHandle: route.sourceHandle,
         targetHandle: route.targetHandle,
-        markerEnd: e.markerEnd ?? { type: MarkerType.ArrowClosed, color: "#6366f1" },
-        data: { ...(e.data ?? {}), edgeType: "branch", curveStyle: route.curveStyle, hiddenInMatrix, layoutMode: mode },
+        markerEnd: edge.markerEnd ?? { type: MarkerType.ArrowClosed, color: "#6366f1" },
+        data: {
+          ...(edge.data ?? {}),
+          edgeType: "branch",
+          curveStyle: route.curveStyle,
+          hiddenInMatrix,
+          hiddenInSunburst,
+          hiddenInSunburstFor: hiddenInSunburst ? sunburstKey : undefined,
+          layoutMode: mode,
+        },
       };
     });
 
@@ -1131,11 +1285,19 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     });
     const existingMatrixFrames = nodes.filter(isAutoMatrixFrame);
     const frameKey = matrixFrameKey(rootId);
-    const newNodes = withMatrixFrame(
+    const framedNodes = withMatrixFrame(
       [...laidOutNodes, ...existingMatrixFrames],
       scopeIds,
       frameKey,
       mode === "matrix"
+    );
+    const newNodes = withSunburstNode(
+      framedNodes,
+      hierarchy,
+      scopeIds,
+      sunburstKey,
+      rootId,
+      sunburstEnabled
     );
 
     set({ nodes: newNodes, edges: newEdges, saveStatus: "unsaved" });

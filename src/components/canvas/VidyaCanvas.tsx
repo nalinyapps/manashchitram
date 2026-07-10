@@ -302,6 +302,7 @@ function VidyaCanvasInner({ boardId }: { boardId: string }) {
       const mode = ((source?.data as { layoutMode?: LayoutMode } | undefined)?.layoutMode ?? "freeForm") as LayoutMode;
       const route = source && targetNode ? routeForMode(mode, source, targetNode) : null;
       const hiddenInMatrix = mode === "matrix";
+      const hiddenInSunburst = mode === "radial";
       const newEdge: Edge = {
         id: generateId(),
         source: connection.source,
@@ -309,10 +310,17 @@ function VidyaCanvasInner({ boardId }: { boardId: string }) {
         sourceHandle: connection.sourceHandle ?? route?.sourceHandle ?? undefined,
         targetHandle: connection.targetHandle ?? route?.targetHandle ?? undefined,
         type: "branch",
-        hidden: hiddenInMatrix,
+        hidden: hiddenInMatrix || hiddenInSunburst,
         reconnectable: true,
         markerEnd: { type: MarkerType.ArrowClosed, color: "#6366f1" },
-        data: { edgeType: "branch", curveStyle: route?.curveStyle ?? "smooth", hiddenInMatrix, layoutMode: mode },
+        data: {
+          edgeType: "branch",
+          curveStyle: route?.curveStyle ?? "smooth",
+          hiddenInMatrix,
+          hiddenInSunburst,
+          hiddenInSunburstFor: hiddenInSunburst ? connection.source : undefined,
+          layoutMode: mode,
+        },
       };
       // Record parent→child relationship if the target has no parent yet.
       const hasParent = targetNode && (targetNode.data as { parentId?: string | null }).parentId;
@@ -334,6 +342,7 @@ function VidyaCanvasInner({ boardId }: { boardId: string }) {
     const mode = ((source.data as { layoutMode?: LayoutMode } | undefined)?.layoutMode ?? "freeForm") as LayoutMode;
     const route = routeForMode(mode, source, target);
     const hiddenInMatrix = mode === "matrix";
+    const hiddenInSunburst = mode === "radial";
 
     const nextEdges = cs.edges.map((edge) => {
       if (edge.id !== oldEdge.id) return edge;
@@ -343,10 +352,18 @@ function VidyaCanvasInner({ boardId }: { boardId: string }) {
         target: connection.target,
         sourceHandle: connection.sourceHandle ?? route.sourceHandle,
         targetHandle: connection.targetHandle ?? route.targetHandle,
-        hidden: hiddenInMatrix,
+        hidden: hiddenInMatrix || hiddenInSunburst,
         reconnectable: true,
         markerEnd: edge.markerEnd ?? { type: MarkerType.ArrowClosed, color: "#6366f1" },
-        data: { ...(edge.data ?? {}), edgeType: "branch", curveStyle: route.curveStyle, hiddenInMatrix, layoutMode: mode },
+        data: {
+          ...(edge.data ?? {}),
+          edgeType: "branch",
+          curveStyle: route.curveStyle,
+          hiddenInMatrix,
+          hiddenInSunburst,
+          hiddenInSunburstFor: hiddenInSunburst ? connection.source : undefined,
+          layoutMode: mode,
+        },
       };
     });
 

@@ -5,6 +5,7 @@ import { SanskritCardNode } from "./SanskritCardNode";
 import { ShlokaCardNode } from "./ShlokaCardNode";
 import { GrammarCardNode } from "./GrammarCardNode";
 import { FrameNode } from "./FrameNode";
+import { SunburstNode } from "./SunburstNode";
 
 export const nodeTypes = {
   // Legacy "mindmap" nodes are migrated to shapes on load; alias to ShapeNode
@@ -17,6 +18,7 @@ export const nodeTypes = {
   shloka: ShlokaCardNode,
   grammar: GrammarCardNode,
   frame: FrameNode,
+  sunburst: SunburstNode,
 };
 
 export {
@@ -27,4 +29,5 @@ export {
   ShlokaCardNode,
   GrammarCardNode,
   FrameNode,
+  SunburstNode,
 };

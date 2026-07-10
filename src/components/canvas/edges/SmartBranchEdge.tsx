@@ -39,7 +39,7 @@ function SmartBranchEdgeComponent({
   const d = (data ?? {}) as VidyaEdgeData;
   const nodes = useNodes();
   const deleteEdges = useCanvasStore((s) => s.deleteEdges);
-  if (d.hiddenInMatrix) return null;
+  if (d.hiddenInMatrix || d.hiddenInSunburst) return null;
 
   let path: string;
   let labelX: number;
