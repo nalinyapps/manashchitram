@@ -312,6 +312,12 @@ const AUTOFIT_FIELDS = new Set([
   "rule", "fontSize", "fontFamily", "fontStyle", "fontWeight", "textAlign",
   "shapeType", "petalCount", "borderWidth", "borderRadius", "borderStyle",
 ]);
+const MIN_AUTO_NODE_WIDTH = 160;
+const MIN_AUTO_NODE_HEIGHT = 56;
+const MAX_AUTO_TEXT_WIDTH = 520;
+const MAX_AUTO_CARD_WIDTH = 560;
+const AUTOFIT_TEXT_PADDING_X = 28;
+const AUTOFIT_TEXT_PADDING_Y = 22;
 
 function clampValue(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
@@ -387,10 +393,10 @@ function maxInlineFontSize(data: Record<string, unknown>): number | null {
 
 function textPaddingFor(node: Node, data: Record<string, unknown>): { x: number; y: number } {
   const borderWidth = typeof data.borderWidth === "number" ? data.borderWidth : 2;
-  if (node.type === "sticky") return { x: 62 + borderWidth * 2, y: 58 + borderWidth * 2 };
-  if (node.type === "text") return { x: 62 + borderWidth * 2, y: 54 + borderWidth * 2 };
-  if (node.type === "mindmap") return { x: 64 + borderWidth * 2, y: 56 + borderWidth * 2 };
-  return { x: 70 + borderWidth * 2, y: 62 + borderWidth * 2 };
+  if (node.type === "sticky") return { x: 58 + AUTOFIT_TEXT_PADDING_X + borderWidth * 2, y: 42 + AUTOFIT_TEXT_PADDING_Y + borderWidth * 2 };
+  if (node.type === "text") return { x: 34 + AUTOFIT_TEXT_PADDING_X + borderWidth * 2, y: 30 + AUTOFIT_TEXT_PADDING_Y + borderWidth * 2 };
+  if (node.type === "mindmap") return { x: 40 + AUTOFIT_TEXT_PADDING_X + borderWidth * 2, y: 34 + AUTOFIT_TEXT_PADDING_Y + borderWidth * 2 };
+  return { x: 48 + AUTOFIT_TEXT_PADDING_X + borderWidth * 2, y: 42 + AUTOFIT_TEXT_PADDING_Y + borderWidth * 2 };
 }
 
 function shapeFitFactor(shapeType: string): { width: number; height: number } {
@@ -491,9 +497,9 @@ function contentFitSize(node: Node, measuredContent?: ContentSize): { width: num
   const words = text.split(/\s+/).filter(Boolean);
   const longestWord = words.reduce((max, word) => Math.max(max, word.length), 0);
 
-  const minWidth = node.type === "text" ? 160 : node.type === "sticky" ? 180 : 140;
-  const minHeight = node.type === "sticky" ? 90 : node.type === "shape" ? 70 : 48;
-  const maxWidth = node.type === "text" ? 760 : node.type === "sticky" ? 620 : 680;
+  const minWidth = node.type === "text" ? MIN_AUTO_NODE_WIDTH : node.type === "sticky" ? 180 : 140;
+  const minHeight = node.type === "sticky" ? 90 : node.type === "shape" ? 70 : MIN_AUTO_NODE_HEIGHT;
+  const maxWidth = node.type === "text" ? MAX_AUTO_TEXT_WIDTH : MAX_AUTO_CARD_WIDTH;
   const padding = textPaddingFor(node, data);
   const padX = padding.x;
   const padY = padding.y;
@@ -1200,6 +1206,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     const layoutNodes = nodes.filter((n) => !isAutoMatrixFrame(n) && !isAutoSunburstNode(n));
     const selectedRootId = selectedNodeIds.length === 1 ? selectedNodeIds[0] : undefined;
     const rootId = selectedRootId && layoutNodes.some((n) => n.id === selectedRootId) ? selectedRootId : undefined;
+    if (!rootId) return;
     const sunburstEnabled = mode === "radial" && !!rootId;
     const sunburstKey = sunburstFrameKey(rootId);
 

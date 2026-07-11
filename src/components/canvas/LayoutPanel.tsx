@@ -1,9 +1,11 @@
 "use client";
 
 import { X } from "lucide-react";
+import { toast } from "sonner";
 import { useCanvasStore } from "@/store/canvas-store";
 import { useUIStore } from "@/store/ui-store";
 import { LAYOUT_OPTIONS, type LayoutMode } from "@/lib/layout";
+import { buildHierarchy, getSubtree } from "@/lib/layout/hierarchy";
 import { cn } from "@/lib/utils";
 
 // ── Schematic SVG previews (56×40) ────────────────────────────────────────────
@@ -51,20 +53,54 @@ function Preview({ mode }: { mode: LayoutMode }) {
   );
 }
 
+function nodeTitle(node: { data?: unknown; id: string } | null): string {
+  if (!node) return "";
+  const data = (node.data ?? {}) as Record<string, unknown>;
+  const fields = ["text", "title", "topic", "label", "devanagari", "iast", "translation", "rule"];
+  const title = fields
+    .map((field) => data[field])
+    .find((value): value is string => typeof value === "string" && value.trim().length > 0);
+  return title?.replace(/\s+/g, " ").trim().slice(0, 48) || node.id.slice(0, 8);
+}
+
+function layoutLabel(mode: string | undefined): string {
+  return LAYOUT_OPTIONS.find((option) => option.mode === mode)?.label ?? "Free Form";
+}
+
 export function LayoutPanel() {
   const open = useUIStore((s) => s.layoutPanelOpen);
   const setOpen = useUIStore((s) => s.setLayoutPanelOpen);
   const applyLayout = useCanvasStore((s) => s.applyLayout);
+  const nodes = useCanvasStore((s) => s.nodes);
+  const edges = useCanvasStore((s) => s.edges);
   const selectedNodeIds = useCanvasStore((s) => s.selectedNodeIds);
 
   if (!open) return null;
 
-  const scopeLabel = selectedNodeIds.length === 1 ? "Selected branch" : "Whole board";
+  const selectedNode = selectedNodeIds.length === 1
+    ? nodes.find((node) => node.id === selectedNodeIds[0]) ?? null
+    : null;
+  const hierarchy = buildHierarchy(nodes, edges);
+  const branchIds = selectedNode ? getSubtree(selectedNode.id, hierarchy) : [];
+  const affectedCount = branchIds.length;
+  const currentMode = selectedNode
+    ? ((selectedNode.data as Record<string, unknown> | undefined)?.layoutMode as string | undefined) ?? "freeForm"
+    : undefined;
 
   const handleApply = (mode: LayoutMode) => {
+    if (!selectedNode) {
+      toast.error("Select one parent node first to apply a branch layout.");
+      return;
+    }
     applyLayout(mode);
     // Ask the canvas (inside the ReactFlow provider) to fit the view.
     setTimeout(() => window.dispatchEvent(new CustomEvent("vidya:fitview")), 60);
+    toast.success(`Applied ${layoutLabel(mode)} to ${affectedCount} node${affectedCount === 1 ? "" : "s"}.`, {
+      action: {
+        label: "Undo",
+        onClick: () => useCanvasStore.getState().undo(),
+      },
+    });
   };
 
   return (
@@ -72,7 +108,13 @@ export function LayoutPanel() {
       <div className="flex items-center justify-between border-b px-3 py-2.5">
         <div>
           <h3 className="text-sm font-semibold">Layout</h3>
-          <p className="text-[10px] text-muted-foreground">Applies to: {scopeLabel}</p>
+          {selectedNode ? (
+            <p className="text-[10px] text-muted-foreground">
+              Selected branch · {affectedCount} node{affectedCount === 1 ? "" : "s"}
+            </p>
+          ) : (
+            <p className="text-[10px] text-muted-foreground">Select one parent node first</p>
+          )}
         </div>
         <button onClick={() => setOpen(false)} className="rounded-md p-1 text-muted-foreground hover:bg-muted">
           <X className="h-4 w-4" />
@@ -80,6 +122,22 @@ export function LayoutPanel() {
       </div>
 
       <div className="flex-1 overflow-y-auto p-2">
+        {selectedNode ? (
+          <div className="mb-2 rounded-lg border border-border bg-muted/35 p-2">
+            <div className="truncate text-xs font-medium text-foreground">{nodeTitle(selectedNode)}</div>
+            <div className="mt-1 grid grid-cols-2 gap-1 text-[10px] text-muted-foreground">
+              <span>Descendants</span>
+              <span className="text-right text-foreground">{Math.max(0, affectedCount - 1)}</span>
+              <span>Current</span>
+              <span className="text-right text-foreground">{layoutLabel(currentMode)}</span>
+            </div>
+          </div>
+        ) : (
+          <div className="mb-2 rounded-lg border border-amber-200 bg-amber-50 p-2 text-[10px] text-amber-900">
+            Layouts now apply only to a selected branch, so the whole board will not be rearranged by accident.
+          </div>
+        )}
+
         <div className="flex flex-col gap-1">
           {LAYOUT_OPTIONS.map((opt) => (
             <button
@@ -87,7 +145,7 @@ export function LayoutPanel() {
               onClick={() => handleApply(opt.mode)}
               className={cn(
                 "flex items-center gap-3 rounded-lg border border-transparent p-2 text-left transition-colors",
-                "hover:border-border hover:bg-accent"
+                currentMode === opt.mode ? "border-primary/40 bg-primary/5" : "hover:border-border hover:bg-accent"
               )}
             >
               <Preview mode={opt.mode} />
@@ -98,10 +156,33 @@ export function LayoutPanel() {
             </button>
           ))}
         </div>
+
+        {selectedNode && currentMode === "radial" && (
+          <div className="mt-2 rounded-lg border border-border bg-muted/35 p-2">
+            <div className="text-xs font-medium text-foreground">Radial help</div>
+            <p className="mt-1 text-[10px] leading-snug text-muted-foreground">
+              Sunburst labels shrink or hide when sectors get small. Zoom in, or convert the branch to Matrix/List for dense text.
+            </p>
+            <div className="mt-2 grid grid-cols-3 gap-1">
+              <button className="rounded-md border border-border px-1.5 py-1 text-[10px] hover:bg-background" onClick={() => handleApply("matrix")}>
+                Matrix
+              </button>
+              <button className="rounded-md border border-border px-1.5 py-1 text-[10px] hover:bg-background" onClick={() => handleApply("list")}>
+                List
+              </button>
+              <button
+                className="rounded-md border border-border px-1.5 py-1 text-[10px] hover:bg-background"
+                onClick={() => window.dispatchEvent(new CustomEvent("vidya:fitview"))}
+              >
+                Fit
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="border-t px-3 py-2 text-[10px] text-muted-foreground">
-        Tip: select a node first to arrange just its branch.
+        Tip: select the branch root before applying a layout.
       </div>
     </aside>
   );

@@ -124,6 +124,13 @@ export function RichTextEditor({
     if (height > 0) onContentSizeChangeRef.current?.({ width, height, lineCount, lineHeight });
   }, []);
 
+  const scheduleContentReport = useCallback((activeEditor: Editor | null | undefined) => {
+    requestAnimationFrame(() => {
+      reportContentSize(activeEditor);
+      requestAnimationFrame(() => reportContentSize(activeEditor));
+    });
+  }, [reportContentSize]);
+
   const editor = useEditor({
     extensions: EXTENSIONS,
     content: frozenContent || "",
@@ -131,7 +138,7 @@ export function RichTextEditor({
     immediatelyRender: false,
     onUpdate({ editor }) {
       onChange(editor.getHTML());
-      requestAnimationFrame(() => reportContentSize(editor));
+      scheduleContentReport(editor);
     },
     onBlur({ editor }) {
       reportContentSize(editor);
@@ -141,12 +148,24 @@ export function RichTextEditor({
   });
 
   useEffect(() => {
+    const element = editor?.view.dom as HTMLElement | undefined;
+    if (!editor || !element) return;
+    const schedule = () => scheduleContentReport(editor);
+    element.addEventListener("paste", schedule);
+    element.addEventListener("input", schedule);
+    return () => {
+      element.removeEventListener("paste", schedule);
+      element.removeEventListener("input", schedule);
+    };
+  }, [editor, scheduleContentReport]);
+
+  useEffect(() => {
     if (!editor) return;
     if (editor.isEditable !== editable) editor.setEditable(editable, false);
     if (editable) {
       requestAnimationFrame(() => {
         editor.commands.focus("end");
-        reportContentSize(editor);
+        scheduleContentReport(editor);
       });
     } else {
       requestAnimationFrame(() => {
@@ -154,7 +173,7 @@ export function RichTextEditor({
         hideToolbar();
       });
     }
-  }, [editor, editable, hideToolbar, reportContentSize]);
+  }, [editor, editable, hideToolbar, reportContentSize, scheduleContentReport]);
 
   // Whole-object alignment: when the inspector changes blockAlign, apply it to
   // EVERY paragraph so it overrides any per-paragraph alignment. Skip the first
@@ -180,8 +199,8 @@ export function RichTextEditor({
     }
     // Persist the change
     onChange(editor.getHTML());
-    requestAnimationFrame(() => reportContentSize(editor));
-  }, [editor, blockAlign, onChange, reportContentSize]);
+    scheduleContentReport(editor);
+  }, [editor, blockAlign, onChange, reportContentSize, scheduleContentReport]);
 
   useLayoutEffect(() => {
     if (!editor) return;

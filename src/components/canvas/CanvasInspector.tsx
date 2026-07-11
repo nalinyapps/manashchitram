@@ -6,6 +6,8 @@ import {
   AlignLeft, AlignCenter, AlignRight, AlignJustify,
   Bold, Italic, Plus, Minus, Pencil, StopCircle, Copy,
 } from "lucide-react";
+import { MarkerType } from "@xyflow/react";
+import { toast } from "sonner";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -18,6 +20,8 @@ import {
 import { useCanvasStore } from "@/store/canvas-store";
 import { useUIStore } from "@/store/ui-store";
 import { SANSKRIT_TAG_SUGGESTIONS } from "@/lib/types";
+import { LAYOUT_OPTIONS, routeForMode, type LayoutMode } from "@/lib/layout";
+import { buildHierarchy, getSubtree } from "@/lib/layout/hierarchy";
 import type {
   BorderLayer,
   ConcentricShapeLayer,
@@ -241,6 +245,21 @@ function supportsCornerRadius(node: Node): boolean {
   return ["rounded", "rectangle"].includes(shapeType);
 }
 
+function inspectorNodeTitle(node: Node | undefined | null): string {
+  if (!node) return "None";
+  const data = (node.data ?? {}) as Record<string, unknown>;
+  const fields = ["text", "title", "topic", "label", "devanagari", "iast", "translation", "rule"];
+  const title = fields
+    .map((field) => data[field])
+    .find((value): value is string => typeof value === "string" && value.trim().length > 0);
+  return title?.replace(/\s+/g, " ").trim().slice(0, 44) || node.id.slice(0, 8);
+}
+
+function inspectorLayoutLabel(value: unknown): string {
+  if (typeof value !== "string") return "Free Form";
+  return LAYOUT_OPTIONS.find((option) => option.mode === value)?.label ?? "Free Form";
+}
+
 /** Border style selector: Solid | Dashed | Dotted */
 function BorderStylePicker({ value, onChange }: {
   value?: string; onChange: (v: "solid" | "dashed" | "dotted") => void;
@@ -280,12 +299,20 @@ export function CanvasInspector({ compact = false }: { compact?: boolean }) {
   const setDrawingRegionColor = useUIStore((s) => s.setDrawingRegionColor);
   const drawingRegionOpacity = useUIStore((s) => s.drawingRegionOpacity);
   const setDrawingRegionOpacity = useUIStore((s) => s.setDrawingRegionOpacity);
+  const setLayoutPanelOpen = useUIStore((s) => s.setLayoutPanelOpen);
 
   const selectedNodes = selectedNodeIds.length
     ? nodes.filter((n) => selectedNodeIds.includes(n.id))
     : [];
   const selectedNode = selectedNodes.length === 1 ? selectedNodes[0] : null;
   const selectedEdges = edges.filter((edge) => selectedEdgeIds.includes(edge.id));
+  const hierarchy = buildHierarchy(nodes, edges);
+  const selectedHierarchy = selectedNode ? hierarchy.get(selectedNode.id) : null;
+  const parentNode = selectedHierarchy?.parentId
+    ? nodes.find((node) => node.id === selectedHierarchy.parentId)
+    : null;
+  const childIds = selectedHierarchy?.childIds ?? [];
+  const descendantIds = selectedNode ? getSubtree(selectedNode.id, hierarchy).filter((id) => id !== selectedNode.id) : [];
 
   // ALL hooks before any early return
   const d = (selectedNode?.data ?? {}) as Record<string, unknown>;
@@ -308,6 +335,77 @@ export function CanvasInspector({ compact = false }: { compact?: boolean }) {
     if (!selectedNodes.length) return;
     pushHistory();
     for (const node of selectedNodes) updateNodeData(node.id, { [key]: value });
+  };
+
+  const selectNodesById = (ids: string[]) => {
+    const idSet = new Set(ids);
+    useCanvasStore.setState((state) => ({
+      nodes: state.nodes.map((node) => ({ ...node, selected: idSet.has(node.id) })),
+      edges: state.edges.map((edge) => (edge.selected ? { ...edge, selected: false } : edge)),
+      selectedNodeIds: ids,
+      selectedEdgeIds: [],
+    }));
+  };
+
+  const repairHierarchyFromArrows = () => {
+    if (!nodes.length) return;
+    pushHistory();
+    const repaired = buildHierarchy(nodes, edges);
+    useCanvasStore.setState({
+      nodes: nodes.map((node) => {
+        const info = repaired.get(node.id);
+        if (!info) return node;
+        return {
+          ...node,
+          data: {
+            ...(node.data as Record<string, unknown>),
+            parentId: info.parentId,
+            childOrder: info.childIds,
+          },
+        };
+      }),
+      saveStatus: "unsaved",
+    });
+    toast.success("Repaired hierarchy from arrows.", {
+      action: { label: "Undo", onClick: () => useCanvasStore.getState().undo() },
+    });
+  };
+
+  const rerouteAllArrows = () => {
+    if (!edges.length) return;
+    pushHistory();
+    const byId = new Map(nodes.map((node) => [node.id, node]));
+    useCanvasStore.setState({
+      edges: edges.map((edge) => {
+        const source = byId.get(edge.source);
+        const target = byId.get(edge.target);
+        if (!source || !target) return edge;
+        const mode = (((source.data as Record<string, unknown>).layoutMode as LayoutMode | undefined) ?? "freeForm");
+        const route = routeForMode(mode, source, target);
+        const hiddenInMatrix = mode === "matrix";
+        const hiddenInSunburst = mode === "radial";
+        return {
+          ...edge,
+          hidden: hiddenInMatrix || hiddenInSunburst,
+          sourceHandle: route.sourceHandle,
+          targetHandle: route.targetHandle,
+          markerEnd: edge.markerEnd ?? { type: MarkerType.ArrowClosed, color: "#6366f1" },
+          data: {
+            ...(edge.data ?? {}),
+            edgeType: "branch",
+            curveStyle: route.curveStyle,
+            hiddenInMatrix,
+            hiddenInSunburst,
+            hiddenInSunburstFor: hiddenInSunburst ? edge.source : undefined,
+            layoutMode: mode,
+          },
+        };
+      }),
+      saveStatus: "unsaved",
+    });
+    toast.success(`Rerouted ${edges.length} arrow${edges.length === 1 ? "" : "s"}.`, {
+      action: { label: "Undo", onClick: () => useCanvasStore.getState().undo() },
+    });
   };
 
   if (selectedNodes.length > 1) {
@@ -477,6 +575,35 @@ export function CanvasInspector({ compact = false }: { compact?: boolean }) {
             </div>
           </Section>
           <Separator />
+          <Section label="Repair tools" defaultOpen={false}>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8 w-full justify-start text-xs"
+              disabled={!edges.length}
+              onClick={repairHierarchyFromArrows}
+            >
+              Repair hierarchy from arrows
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8 w-full justify-start text-xs"
+              disabled={!edges.length}
+              onClick={rerouteAllArrows}
+            >
+              Reroute all arrows
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8 w-full justify-start text-xs"
+              onClick={() => window.dispatchEvent(new CustomEvent("vidya:fitview"))}
+            >
+              Fit board to view
+            </Button>
+          </Section>
+          <Separator />
           <Section label="Script">
             <Select value={settings.defaultScriptMode} onValueChange={(v) => setSettings({ defaultScriptMode: v as typeof settings.defaultScriptMode })}>
               <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
@@ -562,6 +689,81 @@ export function CanvasInspector({ compact = false }: { compact?: boolean }) {
       </div>
 
       <div className="flex-1 divide-y overflow-y-auto">
+
+        <Section label="Hierarchy">
+          <div className="space-y-1.5 rounded-lg border border-border bg-muted/30 p-2 text-[10px]">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-muted-foreground">Parent</span>
+              <span className="truncate text-right text-foreground">{inspectorNodeTitle(parentNode)}</span>
+            </div>
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-muted-foreground">Children</span>
+              <span className="text-foreground">{childIds.length}</span>
+            </div>
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-muted-foreground">Descendants</span>
+              <span className="text-foreground">{descendantIds.length}</span>
+            </div>
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-muted-foreground">Layout</span>
+              <span className="truncate text-right text-foreground">{inspectorLayoutLabel(d.layoutMode)}</span>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-1">
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 text-[10px]"
+              disabled={!parentNode}
+              onClick={() => {
+                if (!parentNode) return;
+                selectNodesById([parentNode.id]);
+              }}
+            >
+              Select parent
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 text-[10px]"
+              disabled={!childIds.length}
+              onClick={() => {
+                selectNodesById(childIds);
+              }}
+            >
+              Select children
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 text-[10px]"
+              onClick={() => {
+                selectNodesById([selectedNode.id, ...descendantIds]);
+              }}
+            >
+              Select branch
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 text-[10px]"
+              onClick={() => window.dispatchEvent(new CustomEvent("vidya:fitview"))}
+            >
+              Fit view
+            </Button>
+            <Button
+              variant="default"
+              size="sm"
+              className="col-span-2 h-7 text-[10px]"
+              onClick={() => {
+                selectNodesById([selectedNode.id]);
+                setLayoutPanelOpen(true);
+              }}
+            >
+              Apply branch layout
+            </Button>
+          </div>
+        </Section>
 
         {/* ── Text ── */}
         {isContentNode && (

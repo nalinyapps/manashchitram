@@ -131,13 +131,16 @@ export function useNodeContentAutoFit({ nodeId, boxRef, contentRef }: AutoFitOpt
 
   const scheduleMeasure = useCallback(() => {
     cancelAnimationFrame(frameRef.current);
-    frameRef.current = requestAnimationFrame(measure);
+    frameRef.current = requestAnimationFrame(() => {
+      measure();
+      frameRef.current = requestAnimationFrame(measure);
+    });
   }, [measure]);
 
   useLayoutEffect(() => {
     scheduleMeasure();
     return () => cancelAnimationFrame(frameRef.current);
-  });
+  }, [scheduleMeasure]);
 
   useEffect(() => {
     const box = boxRef.current;
@@ -149,4 +152,18 @@ export function useNodeContentAutoFit({ nodeId, boxRef, contentRef }: AutoFitOpt
     observer.observe(content);
     return () => observer.disconnect();
   }, [boxRef, contentRef, scheduleMeasure]);
+
+  useEffect(() => {
+    const content = contentRef.current;
+    if (!content || typeof MutationObserver === "undefined") return;
+
+    const observer = new MutationObserver(scheduleMeasure);
+    observer.observe(content, {
+      attributes: true,
+      childList: true,
+      characterData: true,
+      subtree: true,
+    });
+    return () => observer.disconnect();
+  }, [contentRef, scheduleMeasure]);
 }

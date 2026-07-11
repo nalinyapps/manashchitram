@@ -23,6 +23,7 @@ import {
   SelectionMode,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
+import { toast } from "sonner";
 
 import { nodeTypes } from "./nodes";
 import { edgeTypes } from "./edges/VidyaEdge";
@@ -54,6 +55,46 @@ function initialShapeSize(shapeType: string): { width: number; height: number } 
     return { width: 170, height: 96 };
   }
   return { width: 140, height: 80 };
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function plainTextToRichText(value: string): string {
+  const normalized = value.replace(/\r\n/g, "\n").trimEnd();
+  if (!normalized.trim()) return "";
+  return normalized
+    .split(/\n{2,}/)
+    .map((paragraph) => {
+      const lines = paragraph.split("\n").map(escapeHtml);
+      return `<p>${lines.join("<br>")}</p>`;
+    })
+    .join("");
+}
+
+function stripRichText(html: unknown): string {
+  if (typeof html !== "string") return "";
+  return html
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/(p|div|li|h[1-6])>/gi, "\n")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .trim();
+}
+
+function pasteTextFieldForNode(node: Node): "text" | "devanagari" | "rule" | null {
+  if (["shape", "mindmap", "sticky", "text"].includes(node.type ?? "")) return "text";
+  if (node.type === "sanskrit" || node.type === "shloka") return "devanagari";
+  if (node.type === "grammar") return "rule";
+  return null;
 }
 
 function calcGuides(
@@ -463,6 +504,50 @@ function VidyaCanvasInner({ boardId }: { boardId: string }) {
     [screenToFlowPosition, setNodes]  // stable deps
   );
 
+  const pasteClipboard = useCallback(async () => {
+    const cs = useCanvasStore.getState();
+    if (cs.clipboard) {
+      cs.paste();
+      toast.success("Pasted copied objects.", {
+        action: { label: "Undo", onClick: () => useCanvasStore.getState().undo() },
+      });
+      return;
+    }
+
+    if (cs.selectedNodeIds.length !== 1) {
+      toast.error("Select one editable node before pasting text.");
+      return;
+    }
+
+    const node = cs.nodes.find((candidate) => candidate.id === cs.selectedNodeIds[0]);
+    if (!node) return;
+    const targetField = pasteTextFieldForNode(node);
+    if (!targetField) {
+      toast.error("Select a text, shape, sticky, mind-map, or Sanskrit node to paste text.");
+      return;
+    }
+
+    try {
+      const pasted = await navigator.clipboard?.readText();
+      if (!pasted?.trim()) return;
+      const data = (node.data ?? {}) as Record<string, unknown>;
+      const existing = targetField === "text"
+        ? ((typeof data.text === "string" && data.text.trim()) ? data.text : stripRichText(data.richText))
+        : (typeof data[targetField] === "string" ? data[targetField] : "");
+      const nextText = existing ? `${existing}\n${pasted}` : pasted;
+      cs.pushHistory();
+      cs.updateNodeData(node.id, {
+        [targetField]: nextText,
+        ...(targetField === "text" ? { richText: plainTextToRichText(nextText) } : {}),
+      });
+      toast.success("Pasted text into selected node.", {
+        action: { label: "Undo", onClick: () => useCanvasStore.getState().undo() },
+      });
+    } catch {
+      toast.error("Open the node editor to paste text, or allow clipboard access.");
+    }
+  }, []);
+
   // ── Keyboard shortcuts ─────────────────────────────────────────────
   // CRITICAL FIX: use getState() instead of subscribing to `store`
   // so this effect only runs once (fitView/zoom are stable from useReactFlow)
@@ -481,7 +566,7 @@ function VidyaCanvasInner({ boardId }: { boardId: string }) {
       else if (mod && e.key === "z")           { e.preventDefault(); cs.undo(); }
       else if (mod && e.key === "s")           { e.preventDefault(); debouncedSave(); cs.setSaveStatus("unsaved"); }
       else if (mod && e.key === "c")           { cs.copySelected(); }
-      else if (mod && e.key === "v")           { e.preventDefault(); cs.paste(); }
+      else if (mod && e.key === "v")           { e.preventDefault(); void pasteClipboard(); }
       else if (mod && e.key === "d")           { e.preventDefault(); cs.duplicateSelected(); }
       else if ((e.key === "Delete" || e.key === "Backspace") && !mod) { cs.deleteSelected(); }
       else if (e.key === "Tab")                { e.preventDefault(); if (cs.selectedNodeIds[0]) cs.createChildNode(cs.selectedNodeIds[0]); }
@@ -510,7 +595,7 @@ function VidyaCanvasInner({ boardId }: { boardId: string }) {
       window.removeEventListener("keydown", handleKeyDown);
       window.removeEventListener("keyup", handleKeyUp);
     };
-  }, [fitView, zoomIn, zoomOut, debouncedSave]);  // No `store` dep — stable!
+  }, [fitView, zoomIn, zoomOut, debouncedSave, pasteClipboard]);  // No `store` dep — stable!
 
   const bgVariant =
     settings.background === "grid"  ? BackgroundVariant.Lines :
